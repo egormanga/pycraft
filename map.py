@@ -1,9 +1,8 @@
 #!/usr/bin/python3
 # PyCraft map and chunks utilities
 
-from utils import *; logstart('Map')
 from .commons import *
-from .protocol import *
+from utils import *
 
 class Block(Updatable):
 	def __init__(self,
@@ -61,8 +60,5 @@ testchunk = Chunk(0, 0, [
 		Block(0, 0, 0, 2, 0)
 	])
 ])
-
-if (__name__ == '__main__'): logstarted(); exit()
-else: logimported()
 
 # by Sdore, 2018

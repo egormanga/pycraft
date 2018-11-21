@@ -1,4 +1,6 @@
+**.db
 **.log
 **.pyc
 **.old
 **/__pycache__
+**_config.py

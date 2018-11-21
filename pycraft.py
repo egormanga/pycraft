@@ -1,16 +1,10 @@
 #!/usr/bin/python3
-# pycraft
+# Pycraft
 
-from protocol import *
-from server import *
-from utils import *; logstart('pycraft')
+from .commons import *
+from utils import *; logstart('Pycraft')
 
-def main():
-	server = MCServer()
-	server.start()
-	server.loop()
-
-if (__name__ == '__main__'): logstarted(); main()
+if (__name__ == '__main__'): logstarted(); exit()
 else: logimported()
 
 # by Sdore, 2018
