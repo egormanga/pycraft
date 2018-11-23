@@ -48,6 +48,8 @@ class MCServer:
 		self.socket.bind((ip, port))
 		self.socket.setblocking(False) # FIXME TEST
 		#self.socket.settimeout(1)
+		self.tick = int()
+		self.startedAt = time.time()
 	@property
 	def players(self):
 		return [i.player for i in self.clients if i.player]
@@ -60,11 +62,13 @@ class MCServer:
 
 	handlers = Handlers()
 	def handle(self):
+		self.tick += 1
+		log("\033[K\033[2m%.4f ticks/sec." % ((time.time()-self.startedAt)/self.tick), end='\033[0m\r', raw=True, nolog=True)
 		try: self.clients.append(Client(self.socket.accept()[0]))
 		except OSError: pass
 		self.clients.discard()
 		for ii, c in enumerate(self.clients):
-			time.sleep(0.1) # TODO FIXME optimize instead of slowing down (preventing 100% CPU load)
+			#time.sleep(0.01) # TODO FIXME optimize instead of slowing down (preventing 100% CPU load)
 			if (c.state == -1): self.clients.to_discard(ii); continue
 			if (c.state == PLAY):
 				if (time.time() > c.lastkeepalive+config.keepalive_interval): c.setstate(-1); continue

@@ -7,13 +7,14 @@ from utils import *; logstart('Client')
 class _config:
 	default_username = 'PyPlayer'
 	locale = locale.getlocale()[0]
+	difficulty = 0
 	view_distance = 0
 	chat_mode = 0
 	chat_colors = False
 	skin_parts = 0b1111111
 	main_hand = 1
 	brand = 'pycraft'
-	keepalive_timeout = 2000
+	keepalive_timeout = 20
 config = _config()
 
 class MCClient(PacketBuffer, Updatable):
@@ -25,16 +26,18 @@ class MCClient(PacketBuffer, Updatable):
 		self.nextkeepalive = 0
 		self.lastkeepalive = float('inf')
 		self.lastkeepalive_id = 0
+		self.setstate(-1)
 		self.tick = int()
 		self.startedAt = time.time()
-		self.setstate(-1)
 	def connect(self, ip=None, port=None):
 		if (ip is None): ip = self.ip
 		if (port is None): port = self.port
 		self.update(locals())
 		self.socket = socket.socket()
 		self.socket.settimeout(10)
-		self.socket.connect((self.ip, self.port))
+		try: self.socket.connect((self.ip, self.port))
+		except OSError as ex: raise \
+			NoServer(ex)
 		#self.socket.settimeout(None)
 		#self.socket.setblocking(False)
 		PacketBuffer.__init__(self, self.socket)
@@ -42,11 +45,11 @@ class MCClient(PacketBuffer, Updatable):
 		log("Connected to server.")
 	def disconnect(self, text=''):
 		try: self.socket.shutdown(socket.SHUT_WR)
-		except socket.error: pass
-		while (True):
+		except OSError: pass
+		while (True): # Flush Tx
 			try: assert self.socket.recv(1)
 			except Exception as ex:
-				if (isinstance(ex, socket.error) and ex.errno in (socket.EAGAIN, socket.EWOULDBLOCK)): continue
+				if (isinstance(ex, OSError) and ex.errno in (socket.EAGAIN, socket.EWOULDBLOCK)): continue
 				else: break
 		self.socket.close()
 		self.setstate(-1)
@@ -58,7 +61,7 @@ class MCClient(PacketBuffer, Updatable):
 	def handle(self):
 		if (self.state == -1): raise NoServer
 		self.tick += 1
-		#log("\033[K\033[2m%.4f ticks/sec." % ((time.time()-self.startedAt)/self.tick), end='\033[0m\r', raw=True, nolog=True)
+		log("\033[K\033[2m%.4f ticks/sec." % ((time.time()-self.startedAt)/self.tick), end='\033[0m\r', raw=True, nolog=True) # TODO FIXME
 		if (self.state == PLAY and time.time() > self.lastkeepalive+config.keepalive_timeout): self.setstate(-1); return
 		try: l, pid = self.readPacketHeader()
 		except NoPacket: return
@@ -80,49 +83,61 @@ class MCClient(PacketBuffer, Updatable):
 
 	def status(self):
 		self.sendHandshake(1)
-		Ping.send(self, time.time())
+		Ping.send(self,
+			payload = time.time()
+		)
 		self.block(Pong, STATUS)
-		return self.sendStatusRequest()
+		StatusRequest.send(self)
+		self.block(StatusResponse, STATUS)
 
 	def login(self):
-		#self.status()
-		#self. # TODO ???
+		self.status()
 		self.sendHandshake(2)
-		LoginStart.send(self, self.player.name)
+		LoginStart.send(self,
+			name = self.player.name,
+		)
 
 	def leave(self):
 		self.disconnect()
 		self.connect()
 
 	def sendHandshake(self, state):
-		Handshake.send(self, self.pv, self.ip, self.port, state)
+		self.setstate(HANDSHAKING)
+		Handshake.send(self,
+			pv = self.pv,
+			addr = self.ip,
+			port = self.port,
+			state = state,
+		)
 		self.setstate(state)
 	def sendChatMessage(self, message):
 		self.sendPacket(0x02, # Chat Message
 			writeString(message, 256), # Message
 		)
 		log(f"Sent: «{message}»")
-	def sendPlayerPositionAndLook(self):
-		self.sendPacket(0x11, # Player Position And Look
-			writeDouble(self.player.x), # X
-			writeDouble(self.player.y), # Y
-			writeDouble(self.player.z), # Z
-			writeFloat(self.player.yaw), # Yaw
-			writeFloat(self.player.pitch), # Pitch
-			writeBool(self.player.on_ground), # On Ground
-		)
 class NoServer(Exception): pass
 
 ### XXX ###
 
-@MCClient.handler(Pong) # Pong
+@MCClient.handler(StatusResponse)
+def handleStatusResponse(s):
+	response, = StatusResponse.recv(s)@['response']
+	response = json.loads(response)
+	s.pv = response['version']['protocol']
+
+@MCClient.handler(Pong)
 def handlePong(s):
-	payload, = Pong.recv(s)
+	payload, = Pong.recv(s)@['payload']
 	s.ping = time.time()-payload
+
+@MCClient.handler(LoginDisconnect)
+def handleLoginDisconnect(s):
+	reason, = LoginDisconnect.recv(s)@['reason']
+	s.disconnect(reason)
 
 @MCClient.handler(LoginSuccess)
 def handleLoginSuccess(s):
-	uuid, name, = LoginSuccess.recv(c)
+	uuid, name, = LoginSuccess.recv(s)@['uuid', 'name']
 	s.player.update(
 		uuid = uuid,
 		name = name,
@@ -130,8 +145,63 @@ def handleLoginSuccess(s):
 	s.setstate(PLAY)
 	log(1, f"Login Success: {s.player}")
 
-#@MCClient.handler(0x03, LOGIN) # Set Compression
+@MCClient.handler(KeepAlive_C)
+def handleKeepAlive(s):
+	id, = KeepAlive_C.recv(s)@['id']
+	KeepAlive_S.send(s,
+		id = id,
+	)
+	s.lastkeepalive = time.time()
+
+@MCClient.handler(JoinGame)
+def handleJoinGame(s):
+	eid, gamemode, dimension, difficulty, players_max, = JoinGame.recv(s)@['eid', 'gamemode', 'dimension', 'difficulty', 'players_max']
+	s.player.update(
+		eid = eid,
+		gamemode = gamemode,
+		dimension = dimension,
+	)
+	s.difficulty = difficulty
+	s.players_max = players_max
+
+@MCClient.handler(PlayerAbilities_C)
+def handlePlayerAbilities(s):
+	flags, flying_speed, walking_speed, = PlayerAbilities_C.recv(s)@['flags', 'flying_speed', 'walking_speed']
+	ClientSettings.send(s,
+		locale = config.locale,
+		view_distance = config.view_distance,
+		chat_flags = config.chat_mode | (config.chat_colors << 3),
+		difficulty = config.difficulty,
+		show_cape = config.skin_parts & 1,
+	)
+
+@MCClient.handler(PlayerPositionAndLook_C)
+def handlePlayerPositionAndLook(s):
+	x, y, z, yaw, pitch, on_ground = PlayerPositionAndLook_C.recv(s)@['x', 'y', 'z', 'yaw', 'pitch', 'on_ground']
+	s.player.updatePos(
+		x = x,
+		y = y,
+		z = z,
+		yaw = yaw,
+		pitch = pitch,
+		on_ground = on_ground,
+	)
+	log(1, f"Player Position And Look: {s.player}")
+	PlayerPositionAndLook_S.send(s,
+		x = s.player.pos.x,
+		y = s.player.pos.y,
+		z = s.player.pos.z,
+		yaw = s.player.pos.yaw,
+		pitch = s.player.pos.pitch,
+		on_ground = s.player.pos.on_ground,
+	)
+	ClientStatus.send(s,
+		action_id = 1, # Perform Respawn
+	)
+
+#@MCClient.handler(SetCompression)
 def handleSetCompression(s):
+	threshold, = SetCompression.recv(s)['threshold']
 	s.compression = readVarInt(s)
 	log(1, f"Set Compression: {s.compression}")
 
@@ -150,60 +220,10 @@ def handlePluginMessage(s):
 		writeString(config.brand),
 	)
 
-@MCClient.handler(LoginDisconnect)
+@MCClient.handler(Disconnect)
 def handleDisconnect(s):
-	reason, = LoginDisconnect.recv(s)
+	reason, = Disconnect.recv(s)@['reason']
 	s.disconnect(reason)
-
-#@MCClient.handler(0x21, PLAY) # Keep Alive
-def handleKeepAlive(s):
-	s.sendPacket(0x0E, # Keep Alive
-		writeLong(readLong(s)), # Keep Alive ID
-	)
-	s.lastkeepalive = time.time()
-
-#@MCClient.handler(0x25, PLAY) # Join Game
-def handleJoinGame(s):
-	s.player.update(
-		eid = readInt(s), # Entity ID
-		gamemode = readUByte(s), # Gamemode
-		dimension = readInt(s), # Dimension
-	)
-	s.difficulty = readUByte(s) # Difficulty
-	s.max_players = readUByte(s) # Max Players
-	s.level_type = readString(s, 16) # Level Type
-	s.reduced_debug_info = readBool(s) # Reduced Debug Info
-
-#@MCClient.handler(0x2E, PLAY) # Player Abilities
-def handlePlayerAbilities(s):
-	NotImplemented # Placeholder
-	s.sendPacket(0x04, # Client Settings
-		writeString(config.locale, 16), # Locale
-		writeByte(config.view_distance), # View Distance
-		writeVarInt(config.chat_mode), # Chat Mode
-		writeBool(config.chat_colors), # Chat Colors
-		writeUByte(config.skin_parts), # Displayed Skin Parts
-		writeVarInt(config.main_hand), # Main Hand
-	)
-
-#@MCClient.handler(0x32, PLAY) # Player Position And Look
-def handlePlayerPositionAndLook(s):
-	s.player.updatePos(
-		x = readDouble(s), # X
-		y = readDouble(s), # Y
-		z = readDouble(s), # Z
-		yaw = readFloat(s), # Yaw
-		pitch = readFloat(s), # Pitch
-		flags = readByte(s), # Flags
-	)
-	log(1, f"Player Position And Look: {s.player}")
-	s.sendPacket(0x00, # Teleport Confirm
-		writeVarInt(readVarInt(s)), # Teleport ID
-	)
-	s.sendPlayerPositionAndLook()
-	s.sendPacket(0x03, # Client Status
-		writeVarInt(0), # Action ID
-	)
 
 #@MCClient.handler(0x00, PLAY) # Spawn Object
 #@MCClient.handler(0x03, PLAY) # Spawn Mob
@@ -227,7 +247,8 @@ def handleDummy(s): # TODO: Implement me!
 def main(ip, port=25565, name=config.default_username):
 	setlogfile('PyCraft_client.log')
 	client = MCClient(name=name)
-	client.connect(ip, port)
+	try: client.connect(ip, port)
+	except NoServer as ex: exit(ex)
 	client.login()
 	while (True):
 		try: client.handle()

@@ -1,8 +1,11 @@
 #!/usr/bin/python3
 # PyCraft Minecraft protocol
 
-import json, struct, inspect
+import json, struct, inspect, builtins
 from uuid import *
+from utils import constrain
+
+def hex(x, l=2): return '0x%%0%dX' % l % x
 
 class State(int):
 	def __repr__(self): return f"<state {str(self)} ({int(self)})>"
@@ -26,7 +29,7 @@ def readString(c, l=32767): return c.read(min(readVarInt(c), l*4)).decode()
 def readChat(c): return json.loads(readString(c))
 def readIdentifier(c): return readString(c).split(':', maxsplit=1)
 
-def writeN(t, *v): return struct.pack(t, *(map(int, v) if (t not in 'fd') else v))
+def writeN(t, *v): return struct.pack(t, *((int if (t not in 'fd') else float)(i or 0) for i in v))
 def writeBool(v): return bytes((bool(v),))
 def writeByte(v): return writeN('B', v)
 def writeUByte(v): return writeN('b', v)
@@ -38,9 +41,10 @@ def writeFloat(v): return writeN('f', v)
 def writeDouble(v): return writeN('d', v)
 def writeUUID(v): return writeN('>QQ', (v.int >> 64) & 2**64-1, v.int & 2**64-1)
 def writePosition(pos): return writeN('q', ((int(pos.x) % 0x3FFFFFF) << 38) | ((int(pos.y) & 0xFFF) << 26) | (int(pos.z) & 0x3FFFFFF))
-def writeString(s, l=0): s = s[:max(32767, min(0, l))].encode('utf-8'); return writeVarInt(len(s)) + s
+def writeString(s, l=0): s = s[:constrain(l, 0, 32767)].encode('utf-8') if (s is not None) else b''; return writeVarInt(len(s)) + s
 def writeChat(c): return json.dumps(c, ensure_ascii=False)
 def writeIdentifier(ns, v): return writeString(':'.join((ns, v)))
+def writeData(v): return v
 
 def readVarN(c, n):
 	r = int()
@@ -64,7 +68,7 @@ def writeVarN(v):
 		r.append(c)
 		if (not v): break
 	return bytes(r)
-def writeVarInt(v): return writeVarN(ctypes.c_uint(v).value)
-def writeVarLong(v): return writeVarN(ctypes.c_ulong(v).value)
+def writeVarInt(v): return writeVarN(ctypes.c_uint(v or 0).value)
+def writeVarLong(v): return writeVarN(ctypes.c_ulong(v or 0).value)
 
 # by Sdore, 2018

@@ -1,2 +1,2 @@
 # PyCraft
-A portable Minecraft client and server written in Python
+A portable Minecraft protocol, client and server implementations written in Python

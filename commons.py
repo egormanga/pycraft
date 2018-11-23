@@ -6,8 +6,6 @@ from .protocol import *
 from .versions import *
 from utils import *
 
-def hex(x, l=2): return '0x%%0%dX' % l % x
-
 class Socket(socket.socket):
 	def read(self, n, flags=0):
 		return self.recv(n, flags | socket.MSG_WAITALL)
@@ -52,6 +50,7 @@ class PacketBuffer:
 	def sendPacket(self, packet, *data, nolog=True):
 		if (type(packet) == int): raise \
 			NotImplementedError('pid → packet')
+		if (self.state): assert packet.state == self.state
 		pid = packet.pid
 		data = bytes().join(data)
 		p = writeVarInt(pid) + data
@@ -73,7 +72,7 @@ class Handlers(dict): # TODO: rewrite as a mixin
 		return self.handlers.handler(packet)
 	"""
 	def __getitem__(self, x):
-		if (type(x) == PacketImplGetter):
+		if (type(x) == PacketGetter):
 			return dict.__getitem__(self, x)
 		c, pid = x
 		for i in self:
@@ -110,7 +109,7 @@ class Position(Updatable):
 		return (self.x, self.y, self.z, self.yaw, self.pitch)
 	def setpos(self, pos):
 		self.x, self.y, self.z, self.yaw, self.pitch = pos
-	def updatepos(self, x, y, z, yaw, pitch, flags=0b00000):
+	def updatepos(self, x, y, z, yaw, pitch, on_ground=bool(), flags=0b00000):
 		self.setpos(self.pos[ii]+i if (flags & (1 << ii)) else i for ii, i in enumerate((x, y, z, yaw, pitch)))
 
 class Entity(Updatable):
@@ -151,5 +150,17 @@ class Entities:
 		player = self.add_entity(player)
 		self.players.append(player)
 		return player
+
+### DEBUG ###
+class DebugSocket:
+	@classmethod
+	def __getattr__(cls, attr):
+		return lambda *args, **kwargs: log(f"\033[93m[\033[1;35mDEBUG\033[0;93m] {cls.__name__}.{attr}({', '.join((*map(repr, args), *map(lambda x: f'{x[0]}={repr(x[1])}', kwargs.items())))})\033[0m", raw=True) and None
+class DebugClient(PacketBuffer):
+	def __init__(self, pv):
+		self.pv = pv
+		self.state = State(-1)
+		self.socket = DebugSocket()
+		PacketBuffer.__init__(self, self.socket)
 
 # by Sdore, 2018
