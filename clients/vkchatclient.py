@@ -21,12 +21,11 @@ def main(ip, port=25565, name=config.default_username):
 	client.login()
 	while (True):
 		try:
-			client.handle()
-			try: _, ex, ex.__traceback__ = exceptions.get(block=False)
+			try: ex = exceptions.get()
 			except queue.Empty: pass
+			except TypeError: raise KeyboardInterrupt()
 			else: raise ex
-		except NoServer as ex: exit(ex)
-		except Exception as ex: exception(ex, nolog=True)
+		except Exception as ex: exception(ex)
 		except KeyboardInterrupt as ex: sys.stderr.write('\r'); client.disconnect(); exit(ex)
 
 #@MCClient.handler(0x0E, PLAY) # Chat Message
@@ -35,6 +34,10 @@ def handleChatMessage(s):
 	if ('/l' in repr(c)): s.sendChatMessage('/l '+password)
 	elif ('/tpaccept' in repr(c)): s.sendChatMessage('/tpaccept')
 	#else: plog(c)
+
+@proc
+def loop():
+	client.handle()
 
 @handler
 def handle(u):
