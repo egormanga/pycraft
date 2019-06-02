@@ -1,7 +1,7 @@
 #!/usr/bin/python3
 # PyCraft console client
 
-import io, sys, cimg, json, base64, curses, socket, curses.textpad
+import cimg, curses, curses.textpad
 from pycraft.protocol import *
 from utils import *; logstart('Client')
 
@@ -97,4 +97,4 @@ if (__name__ == '__main__'):
 	except KeyboardInterrupt: exit()
 else: logimported()
 
-# by Sdore, 2018
+# by Sdore, 2019

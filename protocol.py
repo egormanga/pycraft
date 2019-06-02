@@ -1,7 +1,7 @@
 #!/usr/bin/python3
 # PyCraft Minecraft protocol
 
-import json, struct, inspect, builtins
+import json, ctypes, struct, inspect, builtins
 from uuid import *
 from utils import constrain
 
@@ -71,4 +71,4 @@ def writeVarN(v):
 def writeVarInt(v): return writeVarN(ctypes.c_uint(v or 0).value)
 def writeVarLong(v): return writeVarN(ctypes.c_ulong(v or 0).value)
 
-# by Sdore, 2018
+# by Sdore, 2019

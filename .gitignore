@@ -1,3 +1,4 @@
+tmp/
 **.db
 **.log
 **.pyc

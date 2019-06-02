@@ -1,15 +1,15 @@
 #!/usr/bin/python3
 # PyCraft common classes and methods
 
-import zlib, base64, socket, attrdict
+import zlib, attrdict
 from .protocol import *
 from .versions import *
 from utils import *
 
-class Socket(socket.socket):
+class _socket(socket.socket):
 	def read(self, n, flags=0):
 		return self.recv(n, flags | socket.MSG_WAITALL)
-socket.socket = Socket
+socket.socket = _socket
 
 class PacketBuffer:
 	class IncomingPacket:
@@ -163,4 +163,4 @@ class DebugClient(PacketBuffer):
 		self.socket = DebugSocket()
 		PacketBuffer.__init__(self, self.socket)
 
-# by Sdore, 2018
+# by Sdore, 2019

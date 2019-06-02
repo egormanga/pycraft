@@ -30,4 +30,4 @@ SoundEffect = Packet(PLAY, 0x29,
 	pitch = UByte, # Pitch
 )
 
-# by Sdore, 2018
+# by Sdore, 2019

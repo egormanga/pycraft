@@ -20,4 +20,4 @@ SetSlot = Packet(PLAY, 0x2F,
 	data = 'Slot', # Slot data # TODO: Slot
 )
 
-# by Sdore, 2018
+# by Sdore, 2019

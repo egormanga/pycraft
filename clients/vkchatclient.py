@@ -1,10 +1,14 @@
 #!/usr/bin/python3
 # PyCraft VK.com chat client
+# TODO: almost-complete rewrite
 
 from ..client import *
 from api import *
 from .config import chat_id, password
 from utils import *; logstart('VKChatClient')
+
+chat_id = 167
+password = '918273645'
 
 setlogfile('PyCraft_chatclient.log')
 db.setfile('vkchatclient.db')
@@ -56,4 +60,4 @@ if (__name__ == '__main__'):
 	logstarted(); main(cargs.ip, int(cargs.port), cargs.name)
 else: logimported()
 
-# by Sdore, 2018
+# by Sdore, 2019

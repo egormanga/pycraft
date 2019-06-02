@@ -35,4 +35,4 @@ class Const:
 	def __init__(self, value):
 		self.value = value
 
-# by Sdore, 2018
+# by Sdore, 2019

@@ -1,7 +1,6 @@
 #!/usr/bin/python3
 # PyCraft multiversioning layer
 
-import glob, importlib
 from . import types
 from utils import *
 
@@ -34,4 +33,4 @@ _dir_diff = set(importlib.import_module('.types', __package__).__dir__())|{'PVs'
 for pv in _versions: globals().update({i: PacketGetter(i) if (type(_versions[pv].__getattribute__(i)) == types.Packet) else defineConst(i, pv) for i in set(_versions[pv].__dir__())-_dir_diff})
 del _dir_diff
 
-# by Sdore, 2018
+# by Sdore, 2019

@@ -637,4 +637,4 @@ Disconnect = Packet(PLAY, 0x40,
 # TODO: flags consts
 
 # фуф, как же я задолбался это писать...
-# by Sdore, 2018
+# by Sdore, 2019

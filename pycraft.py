@@ -7,4 +7,4 @@ from utils import *; logstart('Pycraft')
 if (__name__ == '__main__'): logstarted(); exit()
 else: logimported()
 
-# by Sdore, 2018
+# by Sdore, 2019

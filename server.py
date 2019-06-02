@@ -136,7 +136,7 @@ class MCServer:
 @MCServer.handler(Handshake)
 def handleHandshake(server, c):
 	a = c.socket.getpeername()
-	c.pv, addr, port, state, = Handshake.recv(c)
+	c.pv, addr, port, state = Handshake.recv(c)@['pv', 'addr', 'port', 'state']
 	log(f"New handshake from {a[0]}:{a[1]}@pv{c.pv}: state {state}")
 
 	if (state == 1): # status
@@ -211,7 +211,7 @@ def handleLoginStart(server, c):
 	#	testchunk.pack(), # Test Chunk
 	#nolog=False)
 
-@MCServer.handler(KeepAlive)
+@MCServer.handler(KeepAlive_S)
 def handleKeepAlive(server, c):
 	keepalive_id, = KeepAlive.recv(c)
 	if (keepalive_id == c.lastkeepalive_id): c.lastkeepalive = time.time()
@@ -220,14 +220,14 @@ def handleKeepAlive(server, c):
 def handleTeleportConfirm(server, c): # TODO
 	readVarInt(c) # Teleport ID
 
-@MCServer.handler(Player_S)
+@MCServer.handler(Player)
 def handlePlayer(server, c):
 	on_ground, = Player_S.recv(c)
 	c.player.update(
 		on_ground = on_ground,
 	)
 
-@MCServer.handler(PlayerPosition_S)
+@MCServer.handler(PlayerPosition)
 def handlePlayerPosition(server, c):
 	x, y, z, stance, on_ground, = PlayerPosition_S.recv(c)
 	c.player.update(
@@ -237,7 +237,7 @@ def handlePlayerPosition(server, c):
 		on_ground = on_ground,
 	)
 
-@MCServer.handler(PlayerLook_S)
+@MCServer.handler(PlayerLook)
 def handlePlayerLook(server, c):
 	yaw, pitch, on_ground, = PlayerLook_S.recv(c)
 	c.player.update(
@@ -290,4 +290,4 @@ def main():
 if (__name__ == '__main__'): logstarted(); main()
 else: logimported()
 
-# by Sdore, 2018
+# by Sdore, 2019

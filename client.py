@@ -264,4 +264,4 @@ if (__name__ == '__main__'):
 	logstarted(); main(cargs.ip, int(cargs.port), cargs.name)
 else: logimported()
 
-# by Sdore, 2018
+# by Sdore, 2019

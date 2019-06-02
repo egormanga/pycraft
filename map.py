@@ -61,4 +61,4 @@ testchunk = Chunk(0, 0, [
 	])
 ])
 
-# by Sdore, 2018
+# by Sdore, 2019
