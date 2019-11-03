@@ -1,11 +1,10 @@
 #!/usr/bin/python3
 # PyCraft client
 
-from . import *
-from utils import *; logstart('Client')
+from . import *; logstart('Client')
 
-class _config:
-	default_username = 'PyPlayer'
+class ClientConfig:
+	username = 'PyPlayer'
 	locale = locale.getlocale()[0]
 	difficulty = 0
 	view_distance = 0
@@ -15,253 +14,175 @@ class _config:
 	main_hand = 1
 	brand = 'pycraft'
 	keepalive_timeout = 20
-config = _config()
 
 class MCClient(PacketBuffer, Updatable):
-	def __init__(self, name=config.default_username):
+	def __init__(self, config=ClientConfig):
+		self.config = config()
+		self.handlers = Handlers(self.handlers)
+		self.handler = lambda x: self.handlers.handler(x)
 		self.socket = socket.socket()
-		self.player = Player(name=name)
-		self.server_brand = str()
-		self.pv = int()
-		self.nextkeepalive = 0
-		self.lastkeepalive = float('inf')
+		self.player = Player(name=self.config.username)
+		self.pv = max(PVs)
+		self.lastkeepalive = inf
 		self.lastkeepalive_id = 0
-		self.setstate(-1)
+		self.ping = 0
+		self.state = DISCONNECTED
 		self.tick = int()
 		self.startedAt = time.time()
-	def connect(self, ip=None, port=None):
-		if (ip is None): ip = self.ip
-		if (port is None): port = self.port
-		self.update(locals())
+
+	def connect(self, addr=None):
+		if (addr is not None): self.addr = addr
 		self.socket = socket.socket()
 		self.socket.settimeout(10)
-		try: self.socket.connect((self.ip, self.port))
+		try: self.socket.connect(self.addr)
 		except OSError as ex: raise \
 			NoServer(ex)
-		#self.socket.settimeout(None)
-		#self.socket.setblocking(False)
+		self.socket.setblocking(True)
 		PacketBuffer.__init__(self, self.socket)
-		self.tick = 0
 		log("Connected to server.")
-	def disconnect(self, text=''):
+
+	def disconnect(self, reason=None):
 		try: self.socket.shutdown(socket.SHUT_WR)
 		except OSError: pass
-		while (True): # Flush Tx
-			try: assert self.socket.recv(1)
-			except Exception as ex:
-				if (isinstance(ex, OSError) and ex.errno in (socket.EAGAIN, socket.EWOULDBLOCK)): continue
-				else: break
 		self.socket.close()
-		self.setstate(-1)
-		log(f"Disconnected from server{': '+text if (text) else ''}.")
+		self.setstate(DISCONNECTED)
+		log(f"""Disconnected from server{f": '{formatChat(reason)}'" if (reason is not None) else ''}.""")
+
 	def setstate(self, state):
 		self.state = State(state)
 
 	handlers = Handlers()
 	def handle(self):
-		if (self.state == -1): raise NoServer
-		self.tick += 1
-		log("\033[K\033[2m%.4f ticks/sec." % ((time.time()-self.startedAt)/self.tick), end='\033[0m\r', raw=True, nolog=True) # TODO FIXME
-		if (self.state == PLAY and time.time() > self.lastkeepalive+config.keepalive_timeout): self.setstate(-1); return
+		if (self.state == DISCONNECTED): raise NoServer()
+		if (self.state == PLAY and time.time() > self.lastkeepalive+self.config.keepalive_timeout): self.setstate(DISCONNECTED); return (-1, None)
 		try: l, pid = self.readPacketHeader()
-		except NoPacket: return
-		try: self.handlers[self, pid](self)
-		except NoHandlerError:
+		except NoPacket: return (-1, None)
+		try:
+			p = self.handlers[self, pid]
+			h = self.handlers[p]
+		except KeyError:
 			log(1, f"Unhandled packet at state {self.state}: length={l} pid={hex(pid)}", nolog=True)
-			log(2, self.packet.read(l), raw=True)
-		log(4, '-'*os.get_terminal_size()[0]+'\n', raw=True)
-		return pid
+			p = self.packet.read(l)
+			log(2, p, raw=True, nolog=True)
+			log(4, '-'*80+'\n', raw=True, nolog=True)
+		else:
+			p = p.recv(self)
+			h(self, p)
+		return (pid, p)
+
 	@classmethod
-	def handler(self, packet):
-		return self.handlers.handler(packet)
+	def handler(cls, packet):
+		return cls.handlers.handler(packet)
 
 	def block(self, pid=-1, state=-1):
 		if (pid == -1 and state == -1): return
-		pid = pid[self.pv].pid
+		if (pid != -1): pid = pid[self.pv].pid
 		lpid = -1
-		while ((state != -1 and self.state != state) or (pid != -1 and lpid != pid)): lpid = self.handle()
-
-	def status(self):
-		self.sendHandshake(1)
-		Ping.send(self,
-			payload = time.time()
-		)
-		self.block(Pong, STATUS)
-		StatusRequest.send(self)
-		self.block(StatusResponse, STATUS)
-
-	def login(self):
-		self.status()
-		self.sendHandshake(2)
-		LoginStart.send(self,
-			name = self.player.name,
-		)
-
-	def leave(self):
-		self.disconnect()
-		self.connect()
+		while ((state != -1 and self.state != state) or (pid != -1 and lpid != pid)): lpid, p = self.handle()
+		return p
 
 	def sendHandshake(self, state):
+		self.disconnect()
+		self.connect()
 		self.setstate(HANDSHAKING)
-		Handshake.send(self,
+		S.Handshake.send(self,
 			pv = self.pv,
-			addr = self.ip,
-			port = self.port,
+			addr = self.addr[0],
+			port = self.addr[1],
 			state = state,
 		)
 		self.setstate(state)
-	def sendChatMessage(self, message):
-		self.sendPacket(0x02, # Chat Message
-			writeString(message, 256), # Message
+
+	def status(self):
+		self.sendHandshake(STATUS)
+		S.StatusRequest.send(self)
+		s = self.block(C.StatusResponse, STATUS)
+		S.Ping.send(self,
+			payload = time.time(),
 		)
-		log(f"Sent: «{message}»")
+		self.block(C.Pong, STATUS)
+		return s.response
+
+	def login(self):
+		if (not self.ping): self.status()
+		self.sendHandshake(LOGIN)
+		S.LoginStart.send(self,
+			name = self.player.name,
+		)
 class NoServer(Exception): pass
 
 ### XXX ###
 
-@MCClient.handler(StatusResponse)
-def handleStatusResponse(s):
-	response, = StatusResponse.recv(s)@['response']
-	response = json.loads(response)
-	s.pv = response['version']['protocol']
+@MCClient.handler(C.StatusResponse)
+def handleStatusResponse(s, p):
+	s.pv = requireProtocolVersion(p.response['version']['protocol'])
 
-@MCClient.handler(Pong)
-def handlePong(s):
-	payload, = Pong.recv(s)@['payload']
-	s.ping = time.time()-payload
+@MCClient.handler(C.Pong)
+def handlePong(s, p):
+	s.ping = time.time()-p.payload
 
-@MCClient.handler(LoginDisconnect)
-def handleLoginDisconnect(s):
-	reason, = LoginDisconnect.recv(s)@['reason']
-	s.disconnect(reason)
+@MCClient.handler(C.LoginDisconnect)
+def handleLoginDisconnect(s, p):
+	s.disconnect(p.reason)
 
-@MCClient.handler(LoginSuccess)
-def handleLoginSuccess(s):
-	uuid, name, = LoginSuccess.recv(s)@['uuid', 'name']
+@MCClient.handler(C.LoginSuccess)
+def handleLoginSuccess(s, p):
 	s.player.update(
-		uuid = uuid,
-		name = name,
+		uuid = p.uuid,
+		name = p.username,
 	)
 	s.setstate(PLAY)
 	log(1, f"Login Success: {s.player}")
 
-@MCClient.handler(KeepAlive_C)
-def handleKeepAlive(s):
-	id, = KeepAlive_C.recv(s)@['id']
-	KeepAlive_S.send(s,
-		id = id,
+@MCClient.handler(C.KeepAlive)
+def handleKeepAlive(s, p):
+	S.KeepAlive.send(s,
+		keepalive_id = p.keepalive_id,
 	)
 	s.lastkeepalive = time.time()
 
-@MCClient.handler(JoinGame)
-def handleJoinGame(s):
-	eid, gamemode, dimension, difficulty, players_max, = JoinGame.recv(s)@['eid', 'gamemode', 'dimension', 'difficulty', 'players_max']
+@MCClient.handler(C.JoinGame)
+def handleJoinGame(s, p):
 	s.player.update(
-		eid = eid,
-		gamemode = gamemode,
-		dimension = dimension,
+		eid = p.eid,
+		gamemode = p.gamemode,
+		dimension = p.dimension,
 	)
-	s.difficulty = difficulty
-	s.players_max = players_max
+	s.difficulty = p.difficulty
+	s.players_max = p.players_max
+	s.level_type = p.level_type
+	s.reduced_debug_info = p.reduced_debug_info
 
-@MCClient.handler(PlayerAbilities_C)
-def handlePlayerAbilities(s):
-	flags, flying_speed, walking_speed, = PlayerAbilities_C.recv(s)@['flags', 'flying_speed', 'walking_speed']
-	ClientSettings.send(s,
-		locale = config.locale,
-		view_distance = config.view_distance,
-		chat_flags = config.chat_mode | (config.chat_colors << 3),
-		difficulty = config.difficulty,
-		show_cape = config.skin_parts & 1,
-	)
+@MCClient.handler(C.Disconnect)
+def handleDisconnect(s, p):
+	s.disconnect(p.reason)
 
-@MCClient.handler(PlayerPositionAndLook_C)
-def handlePlayerPositionAndLook(s):
-	x, y, z, yaw, pitch, on_ground = PlayerPositionAndLook_C.recv(s)@['x', 'y', 'z', 'yaw', 'pitch', 'on_ground']
-	s.player.updatePos(
-		x = x,
-		y = y,
-		z = z,
-		yaw = yaw,
-		pitch = pitch,
-		on_ground = on_ground,
-	)
-	log(1, f"Player Position And Look: {s.player}")
-	PlayerPositionAndLook_S.send(s,
-		x = s.player.pos.x,
-		y = s.player.pos.y,
-		z = s.player.pos.z,
-		yaw = s.player.pos.yaw,
-		pitch = s.player.pos.pitch,
-		on_ground = s.player.pos.on_ground,
-	)
-	ClientStatus.send(s,
-		action_id = 1, # Perform Respawn
-	)
+@MCClient.handler(C.ChatMessage)
+def handleChatMessage(s, p):
+	log(p.message)
 
-#@MCClient.handler(SetCompression)
-def handleSetCompression(s):
-	threshold, = SetCompression.recv(s)['threshold']
-	s.compression = readVarInt(s)
-	log(1, f"Set Compression: {s.compression}")
-
-#@MCClient.handler(0x0D, PLAY) # Server Difficulty
-def handleServerDifficulty(s):
-	s.difficulty = readUByte(s) # Difficulty
-
-#@MCClient.handler(0x19, PLAY) # Plugin Message
-def handlePluginMessage(s):
-	ns, ch = readIdentifier(s)
-	if (ns == 'minecraft'):
-		if (ch == 'brand'):
-			s.server_brand = readString(s)
-	s.sendPacket(0x0A, # Plugin Message
-		writeIdentifier('minecraft', 'brand'),
-		writeString(config.brand),
-	)
-
-@MCClient.handler(Disconnect)
-def handleDisconnect(s):
-	reason, = Disconnect.recv(s)@['reason']
-	s.disconnect(reason)
-
-#@MCClient.handler(0x00, PLAY) # Spawn Object
-#@MCClient.handler(0x03, PLAY) # Spawn Mob
-#@MCClient.handler(0x1C, PLAY) # Entity Status
-#@MCClient.handler(0x22, PLAY) # Chunk Data
-#@MCClient.handler(0x23, PLAY) # Effect
-#@MCClient.handler(0x28, PLAY) # Entity Relative Move
-#@MCClient.handler(0x29, PLAY) # Entity Look And Relative Move
-#@MCClient.handler(0x35, PLAY) # Destroy Entities
-#@MCClient.handler(0x39, PLAY) # Entity Head Look
-#@MCClient.handler(0x3F, PLAY) # Entity Metadata
-#@MCClient.handler(0x41, PLAY) # Entity Velocity
-#@MCClient.handler(0x42, PLAY) # Entity Equipment
-#@MCClient.handler(0x4A, PLAY) # Time Update
-#@MCClient.handler(0x4E, PLAY) # Player List Header And Footer
-#@MCClient.handler(0x50, PLAY) # Entity Teleport
-#@MCClient.handler(0x52, PLAY) # Entity Properties
-def handleDummy(s): # TODO: Implement me!
-	NotImplemented # To prevent spamming with «Unhandled packet» in logs
-
-def main(ip, port=25565, name=config.default_username):
+def main(cargs):
 	setlogfile('PyCraft_client.log')
-	client = MCClient(name=name)
-	try: client.connect(ip, port)
+	class config(ClientConfig):
+		username = cargs.name
+	client = MCClient(config=config)
+	try: client.connect((cargs.ip, cargs.port))
 	except NoServer as ex: exit(ex)
+	s = client.status()
+	log(f"Server '{s['description']['text']}', ping {client.ping}")
 	client.login()
 	while (True):
 		try: client.handle()
-		except NoServer as ex: exit(ex)
-		except Exception as ex: exception(ex, nolog=True)
+		except NoServer: exit("Disconnected.")
+		#except Exception as ex: exception(ex)
 		except KeyboardInterrupt as ex: sys.stderr.write('\r'); client.disconnect(); exit(ex)
 
 if (__name__ == '__main__'):
 	argparser.add_argument('ip', metavar='<ip>')
-	argparser.add_argument('port', nargs='?', default=25565)
-	argparser.add_argument('--name', metavar='username', nargs='?', default=config.default_username)
+	argparser.add_argument('port', nargs='?', type=int, default=25565)
+	argparser.add_argument('-name', metavar='username', nargs=1, default=ClientConfig.username)
 	cargs = argparser.parse_args()
-	logstarted(); main(cargs.ip, int(cargs.port), cargs.name)
+	logstarted(); exit(main(cargs))
 else: logimported()
 
 # by Sdore, 2019

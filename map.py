@@ -13,6 +13,7 @@ class Block(Updatable):
 		data: int,
 	):
 		self.update(locals())
+
 	def __bool__(self):
 		return bool(self.id)
 
@@ -22,8 +23,10 @@ class ChunkSection(Updatable):
 		blocks: list,
 	):
 		self.update(locals())
+
 	def __bool__(self):
 		return any(self.blocks)
+
 	def pack(self):
 		return bytes().join((
 			writeUByte(14), # Bits Per Block
@@ -41,6 +44,7 @@ class Chunk(Updatable):
 		chunks: list,
 	):
 		self.update(locals())
+
 	def pack(self, ground_up_continuous=True):
 		data = bytes().join(i.pack() for i in self.chunks) + writeByte(127)*256 # TODO FIXME
 		#blocks = [j.pack() for j in i.blocks for i in self.chunks]

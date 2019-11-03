@@ -1,8 +1,9 @@
 #!/usr/bin/python3
 # Pycraft
 
+from utils import *
 from .commons import *
-from utils import *; logstart('Pycraft')
+logstart('Pycraft')
 
 if (__name__ == '__main__'): logstarted(); exit()
 else: logimported()

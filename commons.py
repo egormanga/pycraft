@@ -1,10 +1,20 @@
 #!/usr/bin/python3
 # PyCraft common classes and methods
 
-import zlib, attrdict
-from .protocol import *
-from .versions import *
-from utils import *
+from uuid import *
+from utils import *; from utils import S as _S
+
+class State(int):
+	def __repr__(self): return f"<State {str(self)} ({int(self)})>"
+
+	def __str__(self): return ('NONE', 'HANDSHAKING', 'STATUS', 'LOGIN', 'PLAY')[self+1]
+
+	def __bool__(self): return (self != DISCONNECTED)
+DISCONNECTED, HANDSHAKING, STATUS, LOGIN, PLAY = map(State, range(-1, 4))
+
+from .protocol import * # C, S
+from .protocol.pv0 import VarInt
+readVarInt, writeVarInt = VarInt.read, VarInt.pack
 
 class _socket(socket.socket):
 	def read(self, n, flags=0):
@@ -13,6 +23,8 @@ socket.socket = _socket
 
 class PacketBuffer:
 	class IncomingPacket:
+		__slots__ = ('compression', 'buffer', 'pid')
+
 		def __init__(self, socket, compression):
 			self.compression = compression
 			l = readVarInt(socket)
@@ -24,44 +36,47 @@ class PacketBuffer:
 				if (pl): self.buffer = zlib.decompress(self.buffer)
 			else: self.buffer = socket.read(l)
 			self.pid = readVarInt(self)
+
 		def read(self, l):
-			if (self.length < l):
-				del self # XXX ???
-				raise \
-					BufferError('Not enough data')
+			if (self.length < l): raise \
+				BufferError('Not enough data')
 			r, self.buffer = self.buffer[:l], self.buffer[l:]
 			return r
+
 		@property
 		def length(self):
 			return len(self.buffer)
+
+	__slots__ = ('socket', 'compression', 'packet')
 
 	def __init__(self, socket):
 		self.socket = socket
 		self.compression = -1
 		self.packet = None
+
 	def read(self, l):
 		return self.packet.read(l)
+
 	def readPacketHeader(self, nolog=False):
 		" 'Header' because the function returns tuple (length, pid) and for backward compatibility. It actually puts the packet into the buffer. "
 		try: self.packet = self.IncomingPacket(self.socket, self.compression)
-		except OSError as ex: log(ex); self.setstate(-1); raise NoPacket()
-		if (not nolog): log(2, f"Reading packet: length={self.packet.length}, pid={hex(self.packet.pid)}")
+		except OSError as ex: self.setstate(DISCONNECTED); raise NoPacket()
+		log(2, f"Reading packet: length={self.packet.length}, pid={hex(self.packet.pid)}", nolog=True)
+		log(3, self.packet.buffer, raw=True, nolog=True)
 		return self.packet.length, self.packet.pid
-	def sendPacket(self, packet, *data, nolog=True):
-		if (type(packet) == int): raise \
-			NotImplementedError('pid → packet')
+
+	def sendPacket(self, packet, *data, nolog=False):
+		if (type(packet) == int): raise DeprecationWarning('pid → packet')
 		if (self.state): assert packet.state == self.state
 		pid = packet.pid
 		data = bytes().join(data)
 		p = writeVarInt(pid) + data
 		l = len(p)
 		if (self.compression >= 0): p = writeVarInt(l) + zlib.compress(p) if (l >= self.compression) else writeVarInt(0) + p
-		p = writeVarInt(len(p)) + p
-		if (not nolog):
-			log(2, f"Sending packet: length={l}, pid={hex(pid)}")
-			log(3, data, raw=True, nolog=True)
-		try: return self.socket.send(p)
-		except OSError as ex: log(ex); self.setstate(-1)
+		log(2, f"Sending packet: length={len(data)}, pid={hex(pid)}", nolog=True)
+		log(3, data, raw=True, nolog=True)
+		try: return self.socket.sendall(writeVarInt(len(p)) + p)
+		except OSError as ex: self.setstate(DISCONNECTED)
 class NoPacket(Exception): pass
 
 class Handlers(dict): # TODO: rewrite as a mixin
@@ -71,28 +86,44 @@ class Handlers(dict): # TODO: rewrite as a mixin
 	def handler(self, packet):
 		return self.handlers.handler(packet)
 	"""
+
 	def __getitem__(self, x):
-		if (type(x) == PacketGetter):
+		if (isinstance(x, PacketGetter)):
 			return dict.__getitem__(self, x)
+
 		c, pid = x
 		for i in self:
-			p = i[c.pv]
-			if (p.state == c.state and p.pid == pid): return self[i]
+			p = i[requireProtocolVersion(c.pv)]
+			if (p.state == c.state and p.pid == pid): return i
 		else: raise \
-			NoHandlerError()
-	def handler(self, packet): # decorator
+			KeyError()
+
+	def handler(self, packet):
 		def decorator(f):
 			self[packet] = f
-			return f
+			return self[packet]
 		return decorator
-class NoHandlerError(Exception): pass
 
-class Updatable:
+class MojangAPI:
+	baseurl = "https://api.mojang.com"
+
+	@classmethod
+	@cachedfunction
+	def profile(cls, *names):
+		return requests.post(f"{cls.baseurl}/profiles/minecraft", json=names).json()
+
+class Updatable: # TODO: remove this piece of shit!!
+	__slots__ = ()
+
 	def update(self, data={}, **kwdata):
 		data.update(kwdata)
-		for i in data: self.__setattr__(i, data[i])
+		for i in data:
+			if (i in ('self', 'kwargs')): continue
+			setattr(self, i, data[i])
 
 class Position(Updatable):
+	__slots__ = ('x', 'y', 'z', 'yaw', 'pitch', 'on_ground')
+
 	def __init__(self,
 		x = float(),
 		y = float(),
@@ -102,31 +133,43 @@ class Position(Updatable):
 		on_ground = bool(),
 	):
 		self.update(locals())
+
 	def __repr__(self):
 		return ', '.join(map(str, self.pos[:3])).join('()')
+
 	@property
 	def pos(self):
 		return (self.x, self.y, self.z, self.yaw, self.pitch)
+
 	def setpos(self, pos):
 		self.x, self.y, self.z, self.yaw, self.pitch = pos
+
 	def updatepos(self, x, y, z, yaw, pitch, on_ground=bool(), flags=0b00000):
 		self.setpos(self.pos[ii]+i if (flags & (1 << ii)) else i for ii, i in enumerate((x, y, z, yaw, pitch)))
 
 class Entity(Updatable):
+	__slots__ = ('eid', 'pos', 'dimension')
+
 	def __init__(self,
 		eid = -1,
 		pos = Position(),
 		dimension = 0,
 	):
 		self.update(locals())
+
 	def __repr__(self):
 		return f"<Entity #{self.eid} at {self.pos}>"
+
 	@property
 	def metadata(self):
 		return b'\xff'
+
 	def updatePos(self, *args, **kwargs):
 		return self.pos.updatepos(*args, **kwargs)
+
 class Player(Entity):
+	__slots__ = ('uuid', 'name', 'gamemode')
+
 	def __init__(self,
 		uuid = None,
 		name = str(),
@@ -135,21 +178,29 @@ class Player(Entity):
 		Entity.__init__(self, **kwargs)
 		uuid = uuid if (type(uuid) == UUID) else UUID(uuid) if (uuid) else None
 		self.update(locals())
+
 	def __repr__(self):
 		return f"<Player '{self.name}' at {self.pos}>"
 
 class Entities:
+	__slots__ = ('entities', 'players')
+
 	def __init__(self):
 		self.entities = list()
 		self.players = list()
+
 	def add_entity(self, entity):
 		entity.eid = len(self.entities)
 		self.entities.append(entity)
 		return entity
+
 	def add_player(self, player):
 		player = self.add_entity(player)
 		self.players.append(player)
 		return player
+
+def formatChat(chat): # TODO
+	return chat['text']+str().join(_S(chat['extra'])@['text'])
 
 ### DEBUG ###
 class DebugSocket:
@@ -159,7 +210,7 @@ class DebugSocket:
 class DebugClient(PacketBuffer):
 	def __init__(self, pv):
 		self.pv = pv
-		self.state = State(-1)
+		self.state = State(DISCONNECTED)
 		self.socket = DebugSocket()
 		PacketBuffer.__init__(self, self.socket)
 

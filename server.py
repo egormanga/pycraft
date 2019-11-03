@@ -1,12 +1,10 @@
 #!/usr/bin/python3
 # PyCraft server
 
-from . import *
-from pynbt import *
-from utils import *; logstart('Server')
+from . import *; logstart('Server')
 
-class _config:
-	version_name = 'PyCraft 1.13.2'
+class ServerConfig:
+	version_name = 'PyCraft {}'
 	default_gamemode = 0
 	difficulty = 1
 	players_max = 5
@@ -16,46 +14,52 @@ class _config:
 	reduced_debug_info = False
 	server_ip = ''
 	server_port = 25565
-	favicon = __file__.rpartition('/')[0]+'/server-icon.png'
+	favicon = os.path.join(os.path.dirname(__file__), 'server-icon.png')
 	motd = "A PyCraft Server by Sdore"
-config = _config()
-#try: from . import config
-#except ImportError: pass
 
 class Client(PacketBuffer, Updatable):
-	def __init__(self, socket):
+	def __init__(self, socket, address):
 		PacketBuffer.__init__(self, socket)
+		self.address = address
 		self.player = None
 		self.ping = 0
 		self.pv = 0
 		self.brand = ''
 		self.nextkeepalive = 0
-		self.lastkeepalive = float('inf')
+		self.lastkeepalive = inf
 		self.lastkeepalive_id = 0
 		self.state = HANDSHAKING
+
 	def setstate(self, state):
 		self.state = State(state)
+		self.nextkeepalive = 0
 
 class MCServer:
-	def __init__(self, ip='', port=25565):
+	def __init__(self, config=ServerConfig):
+		self.config = config()
 		self.clients = Slist()
+		self.handlers = Handlers(self.handlers)
+		self.handler = lambda x: self.handlers.handler(x)
 		self.entities = Entities()
 		self.env = attrdict.AttrDict(
-			difficulty=config.difficulty,
+			difficulty=self.config.difficulty,
 		)
 		self.socket = socket.socket()
-		self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-		self.socket.bind((ip, port))
-		self.socket.setblocking(False) # FIXME TEST
-		#self.socket.settimeout(1)
+		self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, True)
+		self.socket.bind((self.config.server_ip, self.config.server_port))
+		#self.socket.setblocking(False)
+		self.socket.settimeout(0.01)
 		self.tick = int()
 		self.startedAt = time.time()
+
 	@property
 	def players(self):
 		return [i.player for i in self.clients if i.player]
+
 	def start(self):
 		self.socket.listen()
 		log("Server started.")
+
 	def stop(self):
 		self.socket.detach()
 		log("Server stopped.")
@@ -64,142 +68,159 @@ class MCServer:
 	def handle(self):
 		self.tick += 1
 		log("\033[K\033[2m%.4f ticks/sec." % ((time.time()-self.startedAt)/self.tick), end='\033[0m\r', raw=True, nolog=True)
-		try: self.clients.append(Client(self.socket.accept()[0]))
+		#time.sleep(0.01) # TODO FIXME optimize instead of slowing down (preventing 100% CPU load)
+
+		try: self.clients.append(Client(*self.socket.accept()))
 		except OSError: pass
+
 		self.clients.discard()
 		for ii, c in enumerate(self.clients):
-			#time.sleep(0.01) # TODO FIXME optimize instead of slowing down (preventing 100% CPU load)
-			if (c.state == -1): self.clients.to_discard(ii); continue
+			if (c.socket._closed): c.state = DISCONNECTED
+			if (c.state == DISCONNECTED):
+				self.clients.to_discard(ii)
+				log(f"Disconnected: {c.address}")
+				continue
 			if (c.state == PLAY):
-				if (time.time() > c.lastkeepalive+config.keepalive_interval): c.setstate(-1); continue
+				if (time.time() > c.lastkeepalive+self.config.keepalive_interval): c.setstate(DISCONNECTED); continue
 				if (time.time() >= c.nextkeepalive):
 					c.lastkeepalive_id = random.randrange(2**31)
-					KeepAlive.send(c, c.lastkeepalive_id)
-					c.nextkeepalive = time.time()+config.keepalive_interval
+					C.KeepAlive.send(c,
+						keepalive_id = c.lastkeepalive_id
+					)
+					c.nextkeepalive = time.time()+self.config.keepalive_interval/2
 			try: l, pid = c.readPacketHeader()
 			except NoPacket: continue
-			try: self.handlers[c, pid](self, c)
-			except NoHandlerError:
+			try:
+				p = self.handlers[c, pid]
+				h = self.handlers[p]
+			except KeyError:
 				log(1, f"Unhandled packet at state {c.state}: length={l} pid={hex(pid)}", nolog=True)
 				log(2, c.packet.read(l), raw=True, nolog=True)
-				log(4, '-'*os.get_terminal_size()[0]+'\n', raw=True, nolog=True)
-	@classmethod
-	def handler(self, packet):
-		return self.handlers.handler(packet)
+				log(4, '-'*80+'\n', raw=True, nolog=True)
+				continue
+			try: h(self, c, p.recv(c))
+			except Disconnect as ex:
+				C.LoginDisconnect.send(c,
+					reason = ex.args[0],
+				)
+				c.setstate(DISCONNECTED)
+		self.clients.discard()
 
-	@staticmethod
-	def sendLoginDisconnect(c, text):
-		c.sendPacket(0x00, writeString(text))
-	@staticmethod
-	def sendChunk(c, pos, **args):
-		chunk = None # TODO
-		c.sendPacket(0x22, # Chunk Data
-			writeInt(pos[0]), # Chunk X
-			writeInt(pos[1]), # Chunk Y
-			writeBool(data['ground_up_continuous']), # Ground-Up Continuous
-			writeVarInt(data['primary_bit_mask']), # Primary Bit Mask
-			writeVarInt(len(chunk['data'])), # Size
-			bytes().join(writeByte(i) for i in chunk['data']), # Data
-			writeVatInt(len(chunk['block_entities'])), # Number of block entities
-			bytes().join(writeString(i) for i in chunk['block_entities']), # Block entities
-		)
-	@staticmethod
-	def sendPlayerListItem(c, action, **data):
-		l = 1 # TODO multiple actions
-		r = (
-			writeVarInt(action),
-			writeVarInt(l),
-			writeUUID(data['uuid']),
-		)
-		if (action == 0): # add player
-			r += (
-				writeString(data['name']),
-				writeVarInt(0), # TODO properties
-			)
-		if (action in (0, 1)): # update gamemode
-			r += (
-				writeVarInt(data['gamemode']),
-			)
-		if (action in (0, 2)): # update latency
-			r += (
-				writeVarInt(data['ping']),
-			)
-		if (action in (0, 3)): # update display name
-			r += (
-				writeBool(data['has_display_name']),
-				(writeString(data['display_name']) if (data['has_display_name']) else b''),
-			)
-		c.sendPacket(0x30, *r)
+	@classmethod
+	def handler(cls, packet):
+		return cls.handlers.handler(packet)
+class Disconnect(Exception): pass
 
 ### XXX ###
 
-@MCServer.handler(Handshake)
-def handleHandshake(server, c):
+@MCServer.handler(S.Handshake)
+def handleHandshake(server, c, p):
 	a = c.socket.getpeername()
-	c.pv, addr, port, state = Handshake.recv(c)@['pv', 'addr', 'port', 'state']
-	log(f"New handshake from {a[0]}:{a[1]}@pv{c.pv}: state {state}")
+	log(f"New handshake from {a[0]}:{a[1]}@pv{p.pv}: state {p.state}")
 
-	if (state == 1): # status
+	c.pv = p.pv
+	if (p.state == STATUS):
 		log(1, "Status")
 		c.setstate(STATUS)
-	elif (state == 2): # login
+	elif (p.state == LOGIN):
 		log(1, "Login")
-		pv = requireProtocolVersion(c.pv)
-		if (c.pv != pv): LoginDisconnect.send(c, '{text="Outdated '+('client', 'server')[c.pv < pv]+'"}'); c.setstate(-1); return
 		c.setstate(LOGIN)
-	else: log(f"Wrong state: {state}")
+	else: log(f"Wrong state: {p.state}")
 
-@MCServer.handler(StatusRequest)
-def handleStatusRequest(server, c):
-	try: favicon = base64.b64encode(open(config.favicon, 'rb').read())
-	except: favicon = b''
-	StatusResponse.send(c, json.dumps({
+@MCServer.handler(S.StatusRequest)
+def handleStatusRequest(server, c, p):
+	try: favicon = open(server.config.favicon, 'rb')
+	except Exception: favicon = None
+
+	pv = requireProtocolVersion(c.pv)
+	r = {
 		'version': {
-			'name': config.version_name,
-			'protocol': c.pv,#PV # FIXME TODO
+			'name': server.config.version_name.format(PVs[pv].MCV),
+			'protocol': pv,
 		},
 		'players': {
-			'max': config.players_max,
+			'max': server.config.players_max,
 			'online': len(server.players),
-			'sample': [{'name': i.name, 'id': str(i.uuid)} for i in server.players],
+			'sample': [{
+				'name': i.name,
+				'id': str(i.uuid)
+			} for i in server.players],
 		},
 		'description': {
-			'text': config.motd,
+			'text': server.config.motd,
 		},
-		'favicon': "data:image/png;base64,"+favicon.decode('ascii'),
-	}))
+	}
 
-@MCServer.handler(Ping)
-def handlePing(server, c):
-	payload, = Ping.recv(c)
-	Pong.send(c, payload)
+	if (favicon is not None): r['favicon'] = f"data:image/png;base64,{base64.b64encode(favicon.read()).decode('ascii')}"
 
-@MCServer.handler(LoginStart)
-def handleLoginStart(server, c):
+	C.StatusResponse.send(c,
+		response = r,
+	)
+
+@MCServer.handler(S.Ping)
+def handlePing(server, c, p):
+	C.Pong.send(c,
+		payload = p.payload,
+	)
+
+@MCServer.handler(S.LoginStart)
+def handleLoginStart(server, c, p):
+	pv = requireProtocolVersion(c.pv)
+	if (c.pv != pv): raise Disconnect("Outdated %s" % ('client', 'server')[c.pv < pv])
+
 	#c.sendPacket(0x03, # Set Compression # TODO
-	#	writeVarInt(config.compression_threshold), # Threshold
+	#	writeVarInt(server.config.compression_threshold), # Threshold
 	#)
-	#c.compression = config.compression_threshold
-	# TODO: encryption
+	#c.compression = server.config.compression_threshold
 
-	name, = LoginStart.recv(c)
+	try: profile = MojangAPI.profile(p.name)[0]
+	except Exception: profile = {'name': p.name, 'id': uuid3(NAMESPACE_OID, "OfflinePlayer:"+p.name)}
 	c.player = server.entities.add_player(Player(
-		name=name,
-		uuid=uuid3(NAMESPACE_OID, "OfflinePlayer:"+name),
+		name=profile['name'],
+		uuid=profile['id'],
 	))
-	LoginSuccess.send(c, str(c.player.uuid), c.player.name)
+	C.LoginSuccess.send(c,
+		uuid = str(c.player.uuid),
+		username = c.player.name,
+	)
+	c.nextkeepalive = time.time()+10  # client crash fix
 	c.setstate(PLAY)
-	JoinGame.send(c, c.player.eid, c.player.gamemode, c.player.dimension, server.env.difficulty, config.players_max)
+	C.JoinGame.send(c,
+		eid = c.player.eid,
+		gamemode = c.player.gamemode,
+		dimension = c.player.dimension,
+		difficulty = server.env.difficulty,
+		players_max = server.config.players_max,
+		level_type = server.config.level_type,
+		reduced_debug_info = server.config.reduced_debug_info,
+	)
 	#c.sendPacket(0x19, # Plugin Message
 	#	writeIdentifier('minecraft', 'brand'), # Channel
-	#	writeString(config.brand), # Data
+	#	writeString(server.config.brand), # Data
 	#)
 	#c.sendPacket(0x0D, # Server Difficulty
 	#	writeByte(server.env.difficulty), # Difficulty
 	#)
-	SpawnPosition.send(c, c.player.pos)
-	PlayerAbilities.send(c, 0, 1.0, 1.0)
-	PlayerPositionAndLook_C.send(c, c.player.pos)
+	C.SpawnPosition.send(c,
+		x = c.player.pos.x,
+		y = c.player.pos.y,
+		z = c.player.pos.z,
+		pos = c.player.pos.pos[:3],
+	)
+	C.PlayerAbilities.send(c,
+		flags = 0,
+		flying_speed = 1.0,
+		walking_speed = 1.0,
+	)
+	C.PlayerPositionAndLook.send(c,
+		x = c.player.pos.x,
+		y = c.player.pos.y,
+		z = c.player.pos.z,
+		yaw = c.player.pos.yaw,
+		pitch = c.player.pos.pitch,
+		on_ground = c.player.pos.on_ground,
+		flags = 0,
+	)
 	#server.sendPlayerListItem(c, 0,
 	#	uuid=c.player.uuid,
 	#	name=c.player.name,
@@ -211,70 +232,47 @@ def handleLoginStart(server, c):
 	#	testchunk.pack(), # Test Chunk
 	#nolog=False)
 
-@MCServer.handler(KeepAlive_S)
-def handleKeepAlive(server, c):
-	keepalive_id, = KeepAlive.recv(c)
-	if (keepalive_id == c.lastkeepalive_id): c.lastkeepalive = time.time()
+@MCServer.handler(S.KeepAlive)
+def handleKeepAlive(server, c, p):
+	if (p.keepalive_id == c.lastkeepalive_id): c.lastkeepalive = time.time()
 
-#@MCServer.handler(0x00, PLAY) # Teleport Confirm
-def handleTeleportConfirm(server, c): # TODO
-	readVarInt(c) # Teleport ID
+@MCServer.handler(S.ChatMessage)
+def handleChatMessage(server, c, p):
+	log(c.player.name.join('<>'), p.message)
 
-@MCServer.handler(Player)
-def handlePlayer(server, c):
-	on_ground, = Player_S.recv(c)
-	c.player.update(
-		on_ground = on_ground,
+@MCServer.handler(S.Player)
+def handlePlayer(server, c, p):
+	c.player.pos.update(
+		on_ground = p.on_ground,
 	)
 
-@MCServer.handler(PlayerPosition)
-def handlePlayerPosition(server, c):
-	x, y, z, stance, on_ground, = PlayerPosition_S.recv(c)
-	c.player.update(
-		x = x,
-		y = y,
-		z = z,
-		on_ground = on_ground,
+@MCServer.handler(S.PlayerPosition)
+def handlePlayerPosition(server, c, p):
+	c.player.pos.update(
+		x = p.x,
+		y = p.y,
+		z = p.z,
+		on_ground = p.on_ground,
 	)
 
-@MCServer.handler(PlayerLook)
-def handlePlayerLook(server, c):
-	yaw, pitch, on_ground, = PlayerLook_S.recv(c)
-	c.player.update(
-		yaw = yaw,
-		pitch = pitch,
-		on_ground = on_ground,
+@MCServer.handler(S.PlayerLook)
+def handlePlayerLook(server, c, p):
+	c.player.pos.update(
+		yaw = p.yaw,
+		pitch = p.pitch,
+		on_ground = p.on_ground,
 	)
 
-@MCServer.handler(PlayerPositionAndLook_S)
-def handlePlayerPositionAndLook(server, c):
-	x, y, z, stance, yaw, pitch, on_ground, = PlayerPositionAndLook_S.recv(c)
-	c.player.update(
-		x = x,
-		y = y,
-		z = z,
-		yaw = yaw,
-		pitch = pitch,
-		on_ground = on_ground,
+@MCServer.handler(S.PlayerPositionAndLook)
+def handlePlayerPositionAndLook(server, c, p):
+	c.player.pos.update(
+		x = p.x,
+		y = p.y,
+		z = p.z,
+		yaw = p.yaw,
+		pitch = p.pitch,
+		on_ground = p.on_ground,
 	)
-
-#@MCServer.handler(0x04, PLAY) # Client Settings
-def handleClientSettings(server, c):
-	c.update(
-		locale = readString(c, 16), # Locale
-		view_distance = readByte(c), # View Distance
-		chat_mode = readVarInt(c), # Chat Mode
-		chat_colors = readBool(c), # Chat Colors
-		skin_parts = readUByte(c), # Displayed Skin Parts
-		main_hand = readVarInt(c), # Main Hand
-	)
-
-#@MCServer.handler(0x0A, PLAY) # Plugin Message
-def handlePluginMessage(server, c):
-	ns, ch = readIdentifier(c)
-	if (ns == 'minecraft'):
-		if (ch == 'brand'):
-			c.brand = readString(c)
 
 ### XXX ###
 
@@ -284,7 +282,7 @@ def main():
 	server.start()
 	while (True):
 		try: server.handle()
-		#except Exception as ex: exception(ex, nolog=True)
+		#except Exception as ex: exception(ex)
 		except KeyboardInterrupt: sys.stderr.write('\r'); server.stop(); exit()
 
 if (__name__ == '__main__'): logstarted(); main()
