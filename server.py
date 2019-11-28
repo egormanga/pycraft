@@ -15,12 +15,12 @@ class ServerConfig:
 	server_ip = ''
 	server_port = 25565
 	favicon = os.path.join(os.path.dirname(__file__), 'server-icon.png')
-	motd = "A PyCraft Server by Sdore"
+	motd = "A PyCraft Server"
 
-class Client(PacketBuffer, Updatable):
-	def __init__(self, socket, address):
-		PacketBuffer.__init__(self, socket)
-		self.address = address
+class Client(PacketBuffer):
+	def __init__(self, server, socket, address):
+		self.server, self.socket, self.address = server, socket, address
+		super().__init__()
 		self.player = None
 		self.ping = 0
 		self.pv = 0
@@ -32,7 +32,7 @@ class Client(PacketBuffer, Updatable):
 
 	def setstate(self, state):
 		self.state = State(state)
-		self.nextkeepalive = 0
+		self.nextkeepalive = time.time()+self.server.config.keepalive_interval/2
 
 class MCServer:
 	def __init__(self, config=ServerConfig):
@@ -49,7 +49,7 @@ class MCServer:
 		self.socket.bind((self.config.server_ip, self.config.server_port))
 		#self.socket.setblocking(False)
 		self.socket.settimeout(0.01)
-		self.tick = int()
+		self.ticks = int()
 		self.startedAt = time.time()
 
 	@property
@@ -64,13 +64,11 @@ class MCServer:
 		self.socket.detach()
 		log("Server stopped.")
 
-	handlers = Handlers()
 	def handle(self):
-		self.tick += 1
-		log("\033[K\033[2m%.4f ticks/sec." % ((time.time()-self.startedAt)/self.tick), end='\033[0m\r', raw=True, nolog=True)
+		self.tick()
 		#time.sleep(0.01) # TODO FIXME optimize instead of slowing down (preventing 100% CPU load)
 
-		try: self.clients.append(Client(*self.socket.accept()))
+		try: self.clients.append(Client(self, *self.socket.accept()))
 		except OSError: pass
 
 		self.clients.discard()
@@ -88,28 +86,40 @@ class MCServer:
 						keepalive_id = c.lastkeepalive_id
 					)
 					c.nextkeepalive = time.time()+self.config.keepalive_interval/2
-			try: l, pid = c.readPacketHeader()
-			except NoPacket: continue
-			try:
-				p = self.handlers[c, pid]
-				h = self.handlers[p]
-			except KeyError:
-				log(1, f"Unhandled packet at state {c.state}: length={l} pid={hex(pid)}", nolog=True)
-				log(2, c.packet.read(l), raw=True, nolog=True)
-				log(4, '-'*80+'\n', raw=True, nolog=True)
-				continue
-			try: h(self, c, p.recv(c))
-			except Disconnect as ex:
-				C.LoginDisconnect.send(c,
-					reason = ex.args[0],
-				)
-				c.setstate(DISCONNECTED)
+			self.handle_client_packet(c)
 		self.clients.discard()
+
+	handlers = Handlers()
+	def handle_client_packet(self, c):
+		try: l, pid = c.readPacketHeader()
+		except NoServer: c.setstate(DISCONNECTED); return
+		except NoPacket: return
+		try:
+			p = self.handlers[c, pid]
+			h = self.handlers[p]
+		except KeyError:
+			log(1, f"Unhandled packet at state {c.state}: length={l} pid={hex(pid)}", nolog=True)
+			log(2, c.packet.read(l), raw=True, nolog=True)
+			log(4, '-'*80+'\n', raw=True, nolog=True)
+			return
+		try: h(self, c, p.recv(c))
+		except Disconnect as ex:
+			(C.Disconnect if (c.state == PLAY) else C.LoginDisconnect).send(c,
+				reason = ex.args[0],
+			)
+			c.setstate(DISCONNECTED)
+
+	def tick(self):
+		self.ticks += 1
+		log("\033[K\033[2m%.4f ticks/sec." % ((time.time()-self.startedAt)/self.ticks), end='\033[0m\r', raw=True, nolog=True)
 
 	@classmethod
 	def handler(cls, packet):
 		return cls.handlers.handler(packet)
-class Disconnect(Exception): pass
+class Disconnect(Exception):
+	def __init__(self, *reason, **kwargs):
+		parseargs(kwargs, text='', extra=reason)
+		super().__init__(kwargs)
 
 ### XXX ###
 
@@ -166,7 +176,7 @@ def handlePing(server, c, p):
 @MCServer.handler(S.LoginStart)
 def handleLoginStart(server, c, p):
 	pv = requireProtocolVersion(c.pv)
-	if (c.pv != pv): raise Disconnect("Outdated %s" % ('client', 'server')[c.pv < pv])
+	if (c.pv != pv): raise Disconnect(f"Outdated {'client' if (c.pv < pv) else 'server'}")
 
 	#c.sendPacket(0x03, # Set Compression # TODO
 	#	writeVarInt(server.config.compression_threshold), # Threshold
@@ -178,12 +188,12 @@ def handleLoginStart(server, c, p):
 	c.player = server.entities.add_player(Player(
 		name=profile['name'],
 		uuid=profile['id'],
+		gamemode=server.config.default_gamemode,
 	))
 	C.LoginSuccess.send(c,
 		uuid = str(c.player.uuid),
 		username = c.player.name,
 	)
-	c.nextkeepalive = time.time()+10  # client crash fix
 	c.setstate(PLAY)
 	C.JoinGame.send(c,
 		eid = c.player.eid,

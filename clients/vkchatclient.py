@@ -1,63 +1,74 @@
 #!/usr/bin/python3
 # PyCraft VK.com chat client
-# TODO: almost-complete rewrite
 
-from ..client import *
 from api import *
-from .config import chat_id, password
-from utils import *; logstart('VKChatClient')
+from utils.nolog import *
+from ..client import *
+logstart('VKChatClient')
 
-chat_id = 167
-password = '918273645'
+setlogfile('PyCraft_vkchatclient.log')
+db.setfile('PyCraft_vkchatclient.db')
+API.mode = 'group'
+tokens.require('access_token', group_scope_all)
 
-setlogfile('PyCraft_chatclient.log')
-db.setfile('vkchatclient.db')
-tokens.require('access_token', 'messages,offline')
+@apmain
+@aparg('group_id', metavar='<group_id>')
+@aparg('chat_id', metavar='<chat_id>', type=int)
+@aparg('ip', metavar='<ip>')
+@aparg('port', nargs='?', type=int, default=25565)
+@aparg('-name', metavar='username', default='VK')
+def main(cargs):
+	global client, chat_id, longpoll
 
-def main(ip, port=25565, name=config.default_username):
-	global client
+	group.id = groups(cargs.group_id, access_token=service_key)[0]['id']
+	chat_id = cargs.chat_id
+
 	db.load()
 	setonsignals(exit)
 	exceptions = queue.Queue()
-	lp(eq=exceptions)
-	client = MCClient(name=name)
-	client.connect(ip, port)
-	client.login()
+	longpoll = lp(eq=exceptions)
+
+	class config(ClientConfig):
+		username = cargs.name
+
+	try:
+		client = Builder(MCClient, config=config) \
+			.connect((cargs.ip, cargs.port)) \
+			.login() \
+			.block(state=PLAY) \
+			.build()
+
+		S.ChatMessage.send(client,
+			message = "/kill",
+		)
+	except NoServer as ex: exit(ex)
+
 	while (True):
 		try:
-			try: ex = exceptions.get()
+			client.handle()
+			try: ex = exceptions.get(timeout=0.01)
 			except queue.Empty: pass
 			except TypeError: raise KeyboardInterrupt()
 			else: raise ex
-		except Exception as ex: exception(ex)
+		except NoServer as ex: exit(ex)
+		except Exception as ex: exception(ex, nolog=True)
 		except KeyboardInterrupt as ex: sys.stderr.write('\r'); client.disconnect(); exit(ex)
 
-#@MCClient.handler(0x0E, PLAY) # Chat Message
-def handleChatMessage(s):
-	c = readChat(s)
-	if ('/l' in repr(c)): s.sendChatMessage('/l '+password)
-	elif ('/tpaccept' in repr(c)): s.sendChatMessage('/tpaccept')
-	#else: plog(c)
+@MCClient.handler(C.ChatMessage)
+def handleChatMessage(s, p):
+	log('\033[0m'+formatChat(p.message, ansi=True), ll='[\033[0mChat\033[0;96m]')
+	if (p.message.get('translate') == 'chat.type.announcement' and p.message['with'][0] != client.config.username): send(2000000000+chat_id, formatChat(p.message))
 
-@proc
-def loop():
-	client.handle()
+@command_unknown
+def c_unknown():
+	if (peer_id != 2000000000+chat_id): return
+	if (not text): return
+	u = user(from_id, groups=True, nolog=True)[0]
+	S.ChatMessage.send(client,
+		message = f"/say {u['name']}: {format_message(m)}",
+	)
 
-@handler
-def handle(u):
-	if (u[0] == 4):
-		peer_id, body = u[3], u[5]
-		if (peer_id != 2000000000+chat_id): return
-		m = message(u[1], nolog=True)['items'][0]
-		u = user(m['from_id'], groups=True)[0]
-		if (m['text']): client.sendChatMessage(f"!{u['name']}: {format_message(m)}") # '/me | '
-
-if (__name__ == '__main__'):
-	argparser.add_argument('ip', metavar='<ip>')
-	argparser.add_argument('port', nargs='?', default=25565)
-	argparser.add_argument('-name', metavar='username', nargs='?', default=config.default_username)
-	cargs = argparser.parse_args()
-	logstarted(); main(cargs.ip, int(cargs.port), cargs.name)
+if (__name__ == '__main__'): exit(main())
 else: logimported()
 
 # by Sdore, 2019

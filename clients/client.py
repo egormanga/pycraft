@@ -1,5 +1,6 @@
 #!/usr/bin/python3
 # PyCraft console client
+# [OUTDATED]
 
 import cimg, curses, curses.textpad
 from pycraft.protocol import *

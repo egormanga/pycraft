@@ -135,10 +135,10 @@ class EntityMetadata: # TODO: https://wiki.vg/Entity_metadata#Entity_Metadata_Fo
 			if (b == 127): break
 			k, t = b & 0x1F, b >> 5
 			r[k] = (Byte, Short, Int, Float, String, Slot, Struct (
-		x = Int,
-		y = Int,
-		z = Int
-	))[t].read(c, ctx)
+				x = Int,
+				y = Int,
+				z = Int
+			))[t].read(c, ctx)
 		return r
 
 	### TODO:
@@ -346,7 +346,6 @@ S.EncryptionRequest = Packet(LOGIN, 0x01,
 	key = Array[Byte, 'key_length'],
 	token_length = Short,
 	token = Array[Byte, 'token_length'],
-
 )
 
 
@@ -552,10 +551,10 @@ S.ClientSettings = Packet(PLAY, 0x15,
 		TINY = 3,
 	),
 	chat_flags = Flags[Byte] (
-		CHAT_MODE_ENABLED = 0b00,
-		CHAT_MODE_COMMANDS_ONLY = 0b01,
-		CHAT_MODE_HIDDEN = 0b10,
-		CHAT_COLORS = 0b1000,
+		MODE_ENABLED = 0b00,
+		MODE_COMMANDS_ONLY = 0b01,
+		MODE_HIDDEN = 0b10,
+		COLORS = 0b1000,
 	),
 	chat_colors = Bool,
 	difficulty = Byte,
