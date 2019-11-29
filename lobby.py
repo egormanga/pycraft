@@ -204,7 +204,9 @@ def handleChatMessage(server, c, p):
 def handleClientSettings(server, c, p):
 	server.lobby_clientsettings[c] = p
 
-def main():
+@apmain
+@aparg('ips', metavar='<serverlist>', type=argparse.FileType('r'))
+def main(cargs):
 	global lobby_userdata
 	lobby_userdata = dict()
 
@@ -213,14 +215,14 @@ def main():
 	db.register('lobby_userdata')
 	db.load()
 
-	server = MCLobby([('flafe.org', 26565)], lobby_userdata, config=LobbyConfig)
+	server = MCLobby([tuple(cast(str, int)(i.split(':'))) for i in cargs.ips], lobby_userdata, config=LobbyConfig)
 	server.start()
 	while (True):
 		try: server.handle()
 		except Exception as ex: exception(ex)
 		except KeyboardInterrupt: sys.stderr.write('\r'); server.stop(); exit()
 
-if (__name__ == '__main__'): logstarted(); exit(main())
+if (__name__ == '__main__'): exit(main())
 else: logimported()
 
 # by Sdore, 2019
