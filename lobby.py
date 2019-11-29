@@ -71,6 +71,7 @@ def handleLoginStart(server, c, p):
 	c.player = server.entities.add_player(Player(
 		name=profile['name'],
 		uuid=profile['id'],
+		gamemode=server.config.default_gamemode,
 		dimension=-1,
 	))
 	C.LoginSuccess.send(c,
