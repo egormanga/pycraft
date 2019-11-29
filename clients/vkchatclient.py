@@ -11,6 +11,9 @@ db.setfile('PyCraft_vkchatclient.db')
 API.mode = 'group'
 tokens.require('access_token', group_scope_all)
 
+class VKChatClient(MCClient):
+	handlers = Handlers(MCClient.handlers)
+
 @apmain
 @aparg('group_id', metavar='<group_id>')
 @aparg('chat_id', metavar='<chat_id>', type=int)
@@ -32,7 +35,7 @@ def main(cargs):
 		username = cargs.name
 
 	try:
-		client = Builder(MCClient, config=config) \
+		client = Builder(VKChatClient, config=config) \
 			.connect((cargs.ip, cargs.port)) \
 			.login() \
 			.block(state=PLAY) \
@@ -54,7 +57,7 @@ def main(cargs):
 		except Exception as ex: exception(ex, nolog=True)
 		except KeyboardInterrupt as ex: sys.stderr.write('\r'); client.disconnect(); exit(ex)
 
-@MCClient.handler(C.ChatMessage)
+@VKChatClient.handler(C.ChatMessage)
 def handleChatMessage(s, p):
 	log('\033[0m'+formatChat(p.message, ansi=True), ll='[\033[0mChat\033[0;96m]')
 	if (p.message.get('translate') == 'chat.type.announcement' and p.message['with'][0] != client.config.username): send(2000000000+chat_id, formatChat(p.message))

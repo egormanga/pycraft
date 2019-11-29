@@ -14,10 +14,14 @@ class LobbyConfig(ServerConfig):
 	reduced_debug_info = True
 	motd = "A PyCraft Lobby"
 
+class LobbyClientConfig(ClientConfig):
+	connect_timeout = 1
+	read_timeout = 0.01
+
 class MCLobby(MCServer):
 	handlers = Handlers(MCServer.handlers)
 
-	def __init__(self, lobby_serverips, lobby_userdata, config=LobbyConfig, *args, **kwargs):
+	def __init__(self, lobby_serverips, lobby_userdata, *args, config=LobbyConfig, **kwargs):
 		super().__init__(*args, config=config, **kwargs)
 		self.lobby_serverips, self.lobby_userdata = lobby_serverips, lobby_userdata
 		self.lobby_playerstate = Sdict(lambda: False)  # False = authorization, str = register confirmation, True = logged in, other = playing
@@ -50,10 +54,10 @@ class MCLobby(MCServer):
 			try:
 				try: c.socket.send(s.recv(2048))
 				except OSError as ex:
-					if (ex.errno != 11): raise
+					if (not isinstance(ex, socket.timeout) and ex.errno != socket.EWOULDBLOCK): raise
 				try: s.send(c.socket.recv(2048))
 				except OSError as ex:
-					if (ex.errno != 11): raise
+					if (not isinstance(ex, socket.timeout) and ex.errno != socket.EWOULDBLOCK): raise
 			except OSError: c.socket.close(); s.close(); del self.lobby_playerstate[c]
 
 @MCLobby.handler(S.LoginStart)
@@ -90,7 +94,7 @@ def handleLoginStart(server, c, p):
 	)
 	C.PlayerPositionAndLook.send(c,
 		x = c.player.pos.x,
-		y = c.player.pos.y,
+		y = c.player.pos.head_y,
 		z = c.player.pos.z,
 		yaw = c.player.pos.yaw,
 		pitch = c.player.pos.pitch,
@@ -139,7 +143,7 @@ def handleChatMessage(server, c, p):
 
 		try: cs = server.lobby_clientsettings.pop(c)
 		except KeyError: cs = None
-		class config(ClientConfig):
+		class config(LobbyClientConfig):
 			username = c.player.name
 			if (cs is not None):
 				locale = cs.locale
@@ -156,6 +160,7 @@ def handleChatMessage(server, c, p):
 			.block(pid=C.JoinGame) \
 			.build()
 		except NoServer: raise Disconnect("This server is offline.", color='red')
+		except Exception as ex: raise Disconnect({'text': f"{type(ex).__name__}: ", 'color': 'red', 'bold': True}, {'text': str(ex)})
 
 		#C.Respawn.send(c,
 		#	dimension = (sc.player.dimension+1) % 2,
@@ -184,9 +189,9 @@ def handleChatMessage(server, c, p):
 				level_type = sc.level_type,
 			)
 
-		sc.socket.setblocking(False)
-		c.socket.setblocking(False)
-		server.lobby_playerstate[c] = sc.socket
+		#sc.socket.setblocking(False)
+		#c.socket.setblocking(False)
+		server.lobby_playerstate[c] = sc#.socket
 		return
 
 	C.ChatMessage.send(c,
@@ -199,21 +204,26 @@ def handleChatMessage(server, c, p):
 	)
 
 	for ii, i in enumerate(server.lobby_serverips):
-		try: s = Builder(MCClient, nolog=True).connect(i).build().status()
+		try: s = Builder(MCClient, config=LobbyClientConfig, nolog=True).connect(i).build().status()
 		except NoServer:
-			C.ChatMessage.send(c,
-				message = {'text': '', 'extra': [
-					{'text': f"[{ii+1}]", 'bold': True},
-					{'text': "<offline>"},
-				]},
-			)
+			m = [
+				{'text': f"[{ii+1}] ", 'bold': True, 'color': 'dark_gray'},
+				{'text': "<offline>", 'color': 'dark_gray'},
+			]
+		except Exception as ex:
+			m = [
+				{'text': f"[{ii+1}] ", 'bold': True, 'color': 'red'},
+				{'text': f"<error: {ex}>", 'color': 'red'},
+			]
 		else:
-			C.ChatMessage.send(c,
-				message = {'text': '', 'extra': [
-					{'text': f"[{ii+1}]", 'bold': True},
-					{'text': f" {s['description']} ({s['players']['online']}/{s['players']['max']}, {s['version']['name']})"},
-				]},
-			)
+			m = [
+				{'text': f"[{ii+1}] ", 'bold': True},
+				s['description'],
+				{'text': f" ({s['players']['online']}/{s['players']['max']}, {s['version']['name']})"},
+			]
+		C.ChatMessage.send(c,
+			message = {'text': '', 'extra': m},
+		)
 
 @MCLobby.handler(S.ClientSettings)
 def handleClientSettings(server, c, p):
@@ -237,7 +247,7 @@ def main(cargs):
 		port = cargs.port
 		motd = f"§d§lPyCraft§f Lobby§r of §{'bc'[not ips]}§l{decline(len(ips), ('server', 'servers'), sep='§r ')}"
 
-	server = MCLobby(ips, lobby_userdata, config=config)
+	server = MCLobby(ips, lobby_userdata, config=config, nolog=False)
 	server.start()
 	while (True):
 		try: server.handle()

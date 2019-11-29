@@ -3,6 +3,7 @@
 
 from utils import *
 from .commons import *
+from .map import *
 logstart('Pycraft')
 
 if (__name__ == '__main__'): logstarted(); exit()

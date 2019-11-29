@@ -10,7 +10,9 @@ class ServerConfig:
 	players_max = 5
 	level_type = 'default'
 	compression_threshold = -1
-	keepalive_interval = 15
+	connect_timeout = 0.001
+	keepalive_interval = 5
+	keepalive_timeout = 30
 	tickspeed = 1/20
 	reduced_debug_info = False
 	server_ip = ''
@@ -19,8 +21,8 @@ class ServerConfig:
 	motd = "A PyCraft Server"
 
 class Client(PacketBuffer):
-	def __init__(self, server, socket, address):
-		self.server, self.socket, self.address = server, socket, address
+	def __init__(self, server, socket, address, *, nolog=False):
+		self.server, self.socket, self.address, self.nolog = server, socket, address, nolog
 		super().__init__()
 		self.player = None
 		self.ping = 0
@@ -33,11 +35,11 @@ class Client(PacketBuffer):
 
 	def setstate(self, state):
 		self.state = State(state)
-		self.nextkeepalive = time.time()+self.server.config.keepalive_interval/2
+		self.nextkeepalive = time.time()+self.server.config.keepalive_interval
 
 class MCServer:
-	def __init__(self, config=ServerConfig):
-		self.config = config()
+	def __init__(self, *, config=ServerConfig, nolog=False):
+		self.config, self.nolog = config(), nolog
 		self.clients = Slist()
 		self.handlers = Handlers(self.handlers)
 		self.handler = lambda x: self.handlers.handler(x)
@@ -48,8 +50,7 @@ class MCServer:
 		self.socket = socket.socket()
 		self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, True)
 		self.socket.bind((self.config.server_ip, self.config.server_port))
-		#self.socket.setblocking(False)
-		self.socket.settimeout(0.001)
+		self.socket.settimeout(self.config.connect_timeout)
 		self.ticks = int()
 		self.lasttick = int()
 		self.startedAt = time.time()
@@ -71,7 +72,7 @@ class MCServer:
 			self.tick()
 			self.lasttick = time.time()
 
-		try: self.clients.append(Client(self, *self.socket.accept()))
+		try: self.clients.append(Client(self, *self.socket.accept(), nolog=self.nolog))
 		except OSError: pass
 
 		self.clients.discard()
@@ -82,13 +83,13 @@ class MCServer:
 				log(f"Disconnected: {c.address}")
 				continue
 			if (c.state == PLAY):
-				if (time.time() > c.lastkeepalive+self.config.keepalive_interval): c.setstate(DISCONNECTED); continue
+				if (time.time() > c.lastkeepalive+self.config.keepalive_timeout): c.setstate(DISCONNECTED); continue
 				if (time.time() >= c.nextkeepalive):
 					c.lastkeepalive_id = random.randrange(2**31)
 					C.KeepAlive.send(c,
 						keepalive_id = c.lastkeepalive_id
 					)
-					c.nextkeepalive = time.time()+self.config.keepalive_interval/2
+					c.nextkeepalive = time.time()+self.config.keepalive_interval
 			self.handle_client_packet(c)
 		self.clients.discard()
 
@@ -146,9 +147,10 @@ def handleStatusRequest(server, c, p):
 	except Exception: favicon = None
 
 	pv = requireProtocolVersion(c.pv)
+	release_pvs = [(k, v.MCV if ('.' in v.MCV[0] and '.' in v.MCV[1]) else (v.MCV['.' in v.MCV[1]],)*2) for k, v in PVs.items() if '.' in v.MCV[0]+v.MCV[1]]
 	r = {
 		'version': {
-			'name': server.config.version_name.format(PVs[pv].MCV),
+			'name': server.config.version_name.format(min(release_pvs)[1][0]+'-'+max(release_pvs)[1][1]),
 			'protocol': pv,
 		},
 		'players': {
@@ -174,17 +176,12 @@ def handleStatusRequest(server, c, p):
 def handlePing(server, c, p):
 	C.Pong.send(c,
 		payload = p.payload,
-	)
+	nolog=False)
 
 @MCServer.handler(S.LoginStart)
 def handleLoginStart(server, c, p):
 	pv = requireProtocolVersion(c.pv)
 	if (c.pv != pv): raise Disconnect(f"Outdated {'client' if (c.pv < pv) else 'server'}")
-
-	#c.sendPacket(0x03, # Set Compression # TODO
-	#	writeVarInt(server.config.compression_threshold), # Threshold
-	#)
-	#c.compression = server.config.compression_threshold
 
 	try: profile = MojangAPI.profile(p.name)[0]
 	except Exception: profile = {'name': p.name, 'id': uuid3(NAMESPACE_OID, "OfflinePlayer:"+p.name)}
@@ -207,43 +204,15 @@ def handleLoginStart(server, c, p):
 		level_type = server.config.level_type,
 		reduced_debug_info = server.config.reduced_debug_info,
 	)
-	#c.sendPacket(0x19, # Plugin Message
-	#	writeIdentifier('minecraft', 'brand'), # Channel
-	#	writeString(server.config.brand), # Data
-	#)
-	#c.sendPacket(0x0D, # Server Difficulty
-	#	writeByte(server.env.difficulty), # Difficulty
-	#)
-	C.SpawnPosition.send(c,
-		x = c.player.pos.x,
-		y = c.player.pos.y,
-		z = c.player.pos.z,
-		pos = c.player.pos.pos[:3],
-	)
-	C.PlayerAbilities.send(c,
-		flags = 0,
-		flying_speed = 1.0,
-		walking_speed = 1.0,
-	)
 	C.PlayerPositionAndLook.send(c,
 		x = c.player.pos.x,
-		y = c.player.pos.y,
+		y = c.player.pos.head_y,
 		z = c.player.pos.z,
 		yaw = c.player.pos.yaw,
 		pitch = c.player.pos.pitch,
 		on_ground = c.player.pos.on_ground,
 		flags = 0,
 	)
-	#server.sendPlayerListItem(c, 0,
-	#	uuid=c.player.uuid,
-	#	name=c.player.name,
-	#	gamemode=c.player.gamemode,
-	#	ping=c.ping,
-	#	has_display_name=False,
-	#)
-	#c.sendPacket(0x22, # Chunk Data
-	#	testchunk.pack(), # Test Chunk
-	#nolog=False)
 
 @MCServer.handler(S.KeepAlive)
 def handleKeepAlive(server, c, p):

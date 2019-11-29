@@ -13,6 +13,8 @@ class ClientConfig:
 	skin_parts = 0b1111111
 	main_hand = 1
 	brand = 'pycraft'
+	connect_timeout = 10
+	read_timeout = 0.001
 	keepalive_timeout = 20
 
 class MCClient(PacketBuffer):
@@ -31,10 +33,10 @@ class MCClient(PacketBuffer):
 	def connect(self, addr=None, *, nolog=False):
 		if (addr is not None): self.addr = addr
 		self.socket = socket.socket()
-		self.socket.settimeout(10)
+		self.socket.settimeout(self.config.connect_timeout)
 		try: self.socket.connect(self.addr)
 		except OSError as ex: raise NoServer(ex)
-		self.socket.settimeout(0.001)
+		self.socket.settimeout(self.config.read_timeout)
 		super().__init__()
 		self.setstate(HANDSHAKING)
 		if (not nolog and not self.nolog): log(f"Connected to server {self.addr[0]}:{self.addr[1]}.")
@@ -76,10 +78,9 @@ class MCClient(PacketBuffer):
 		return cls.handlers.handler(packet)
 
 	def block(self, pid=-1, state=-1):
-		if (pid == -1 and state == -1): return
-		if (pid != -1): pid = pid[self.pv].pid
+		if (not isinstance(pid, int)): pid = pid[self.pv].pid
 		lpid = -1
-		while ((state != -1 and self.state != state) or (pid != -1 and lpid != pid)): lpid, p = self.handle()
+		while (lpid == -1 or (state != -1 and self.state != state) or (pid != -1 and lpid != pid)): lpid, p = self.handle()
 		return p
 
 	def sendHandshake(self, state):
@@ -158,9 +159,9 @@ def handleJoinGame(s, p):
 def handleDisconnect(s, p):
 	s.disconnect(p.reason)
 
-#@MCClient.handler(C.ChatMessage)
-#def handleChatMessage(s, p):
-#	if (not s.nolog): log(p.message)
+@MCClient.handler(C.ChatMessage)
+def handleChatMessage(s, p):
+	if (not s.nolog): log(p.message)
 
 @apmain
 @aparg('ip', metavar='<ip>')

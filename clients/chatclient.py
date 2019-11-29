@@ -7,6 +7,9 @@ logstart('ChatClient')
 
 setlogfile('PyCraft_chatclient.log')
 
+class ChatClient(MCClient):
+	handlers = Handlers(MCClient.handlers)
+
 @apmain
 @aparg('ip', metavar='<ip>')
 @aparg('port', nargs='?', type=int, default=25565)
@@ -15,7 +18,7 @@ def main(cargs):
 	class config(ClientConfig):
 		username = cargs.name
 
-	client = Builder(MCClient, config=config) \
+	client = Builder(ChatClient, config=config) \
 		.connect((cargs.ip, cargs.port)) \
 		.login() \
 		.block(state=PLAY) \
@@ -39,7 +42,7 @@ def main(cargs):
 		except Exception as ex: exception(ex)
 		except KeyboardInterrupt as ex: sys.stderr.write('\r'); client.disconnect(); exit(ex)
 
-@MCClient.handler(C.ChatMessage)
+@ChatClient.handler(C.ChatMessage)
 def handleChatMessage(s, p):
 	log('\033[0m'+formatChat(p.message, ansi=True), ll='[\033[0mChat\033[0;96m]')
 

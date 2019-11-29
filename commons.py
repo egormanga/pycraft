@@ -1,6 +1,7 @@
 #!/usr/bin/python3
 # PyCraft common classes and methods
 
+from nbt import *
 from uuid import *
 from utils import *; from utils import S as _S
 
@@ -18,7 +19,21 @@ readVarInt, writeVarInt = VarInt.read, VarInt.pack
 
 class _socket(socket.socket):
 	def read(self, n, flags=0):
-		return self.recv(n, flags | socket.MSG_WAITALL)
+		flags |= socket.MSG_WAITALL
+		if (self.gettimeout() is None): return self.recv(n, flags)
+
+		r = bytearray()
+		t = time.time()
+		to = self.gettimeout()
+		while (n > 0):
+			if (time.time()-t > to): raise socket.timeout()
+			try: c = self.recv(n, flags)
+			except OSError as ex:
+				if (not isinstance(ex, socket.timeout) and ex.errno != socket.EWOULDBLOCK): raise
+				continue
+			n -= len(c)
+			r += c
+		return r
 socket.socket = _socket
 
 class PacketBuffer:
@@ -61,12 +76,12 @@ class PacketBuffer:
 	def read(self, l):
 		return self.packet.read(l)
 
-	def readPacketHeader(self, nolog=False):
+	def readPacketHeader(self, *, nolog=False):
 		""" 'Header' because the function returns tuple (length, pid) and for backward compatibility. It actually puts the packet into the buffer. """
 		if (self.state == DISCONNECTED): raise NoServer()
 		try: self.packet = self.IncomingPacket(self.socket, self.compression)
 		except OSError as ex:
-			if (ex.errno != 11): self.setstate(DISCONNECTED)
+			if (not isinstance(ex, socket.timeout) and ex.errno != socket.EWOULDBLOCK): self.setstate(DISCONNECTED)
 			raise NoPacket()
 		if (not nolog and not self.nolog):
 			log(2, f"Reading packet: length={self.packet.length}, pid={hex(self.packet.pid)}", nolog=True)
@@ -86,8 +101,7 @@ class PacketBuffer:
 			log(2, f"Sending packet: length={len(data)}, pid={hex(pid)}", nolog=True)
 			log(3, data, raw=True, nolog=True)
 		try: return self.socket.sendall(writeVarInt(len(p)) + p)
-		except OSError as ex:
-			if (ex.errno != 11): self.setstate(DISCONNECTED)
+		except OSError as ex: self.setstate(DISCONNECTED)
 class NoServer(Exception): pass
 class NoPacket(Exception): pass
 
@@ -146,16 +160,21 @@ class Position(Updatable):
 		return f"({self.x}, {self.y}, {self.z})"
 
 	@property
+	def head_y(self):
+		return self.y+1.62+1e-8
+
+	@property
 	def pos(self):
 		return (self.x, self.y, self.z, self.yaw, self.pitch)
 
 	@pos.setter
-	def setpos(self, pos):
-		self.x, self.y, self.z, self.yaw, self.pitch = pos
+	def pos(self, pos):
+		self.x, self.y, self.z = pos[:3]
+		if (pos[3:]): self.yaw, self.pitch = pos[3:]
 
-	def updatepos(self, x, y, z, yaw, pitch, on_ground=False, flags=0b00000):
+	def updatepos(self, x, y, z, yaw, pitch, on_ground=None, flags=0b00000):
 		self.setpos(self.pos[ii]+i if (flags & (1 << ii)) else i for ii, i in enumerate((x, y, z, yaw, pitch)))
-		self.on_ground = on_ground
+		if (on_ground is not None): self.on_ground = on_ground
 
 class Entity(Updatable):
 	eid: -1

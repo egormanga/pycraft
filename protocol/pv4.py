@@ -4,7 +4,7 @@
 from .pv1_3 import *; S, C = ver()
 
 PVs = {4}
-MCV = '1.7.2-1.7.5'
+MCV = ('1.7.2', '1.7.5')
 
 
 """ Play """

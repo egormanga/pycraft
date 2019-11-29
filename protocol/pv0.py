@@ -7,28 +7,38 @@ from nbt import *
 from utils import hex, dispatch, staticitemget, Sdict, Slist
 
 PVs = {0}
-MCV = '13w41b'
+MCV = ('13w41b',)*2
 
 
 class _Generic:
 	@classmethod
-	def read(cls, c, ctx=None):
-		return struct.unpack(cls.t._type_, c.read(struct.calcsize(cls.t._type_)))[0]
+	def read(cls, c, *, ctx=None):
+		t = '>'+cls.f
+		return struct.unpack(t, c.read(struct.calcsize(t)))[0]
 
 	@classmethod
-	def pack(cls, v, ctx=None):
-		return struct.pack(cls.t._type_, cls.t(float(v) if (cls.t._type_ in 'fd') else int(v)).value)
-class Bool(_Generic): t = ctypes.c_bool
-class Byte(_Generic): t = ctypes.c_byte
-class UByte(_Generic): t = ctypes.c_ubyte
-class Short(_Generic): t = ctypes.c_short
-class UShort(_Generic): t = ctypes.c_ushort
-class Int(_Generic): t = ctypes.c_int
-class UInt(_Generic): t = ctypes.c_uint
-class Long(_Generic): t = ctypes.c_longlong
-class ULong(_Generic): t = ctypes.c_ulonglong
-class Float(_Generic): t = ctypes.c_float
-class Double(_Generic): t = ctypes.c_double
+	def readn(cls, c, n, *, ctx=None):
+		t = '>'+str(n)+cls.f
+		return struct.unpack(t, c.read(struct.calcsize(t)))
+
+	@classmethod
+	def pack(cls, v, *, ctx=None):
+		return struct.pack('>'+cls.f, cls.t(float(v) if (cls.f in 'fd') else int(v)).value)
+
+	@classmethod
+	def packn(cls, n, *v, ctx=None):
+		return struct.pack('>'+str(n)+cls.f, *(cls.t(float(i) if (cls.f in 'fd') else int(i)).value for i in v))
+class Bool(_Generic): f, t = '?', ctypes.c_bool
+class Byte(_Generic): f, t = 'b', ctypes.c_byte
+class UByte(_Generic): f, t = 'B', ctypes.c_ubyte
+class Short(_Generic): f, t = 'h', ctypes.c_short
+class UShort(_Generic): f, t = 'H', ctypes.c_ushort
+class Int(_Generic): f, t = 'i', ctypes.c_int
+class UInt(_Generic): f, t = 'I', ctypes.c_uint
+class Long(_Generic): f, t = 'q', ctypes.c_longlong
+class ULong(_Generic): f, t = 'Q', ctypes.c_ulonglong
+class Float(_Generic): f, t = 'f', ctypes.c_float
+class Double(_Generic): f, t = 'd', ctypes.c_double
 
 class String:
 	__slots__ = ('length',)
@@ -39,12 +49,12 @@ class String:
 	@staticmethod
 	@dispatch
 	def read(c, ctx, *, length=32767):
-		s = c.read(VarInt.read(c, ctx)).decode('utf8')
+		s = c.read(VarInt.read(c, ctx=ctx)).decode('utf8')
 		assert (len(s) <= length)
 		return s
 
 	@dispatch
-	def read(self, c, ctx=None):
+	def read(self, c, *, ctx=None):
 		return self.read(c, ctx, self.length)
 
 	@staticmethod
@@ -52,20 +62,20 @@ class String:
 	def pack(v, ctx, *, length=32767):
 		assert (len(v) <= length)
 		s = v.encode('utf-8')
-		return VarInt.pack(len(s), ctx) + s
+		return VarInt.pack(len(s), ctx=ctx) + s
 
 	@dispatch
-	def pack(self, v, ctx=None):
+	def pack(self, v, *, ctx=None):
 		return self.pack(v, ctx, length=self.length)
 
 class JSON:
 	@staticmethod
-	def read(c, ctx=None):
-		return json.loads(String.read(c, ctx))
+	def read(c, *, ctx=None):
+		return json.loads(String.read(c, ctx=ctx))
 
 	@staticmethod
-	def pack(v, ctx=None):
-		return String.pack(json.dumps(v, separators=',:', ensure_ascii=False), ctx)
+	def pack(v, *, ctx=None):
+		return String.pack(json.dumps(v, separators=',:', ensure_ascii=False), ctx=ctx)
 class Chat(JSON): pass
 
 class Identifier(String):
@@ -73,15 +83,15 @@ class Identifier(String):
 	name_chars = ns_chars+'/.'
 
 	@classmethod
-	def pack(cls, v, ctx=None):
+	def pack(cls, v, *, ctx=None):
 		ns, name = v.split(':')
 		assert all(c in ns_chars for c in ns)
 		assert all(c in name_chars for c in name)
-		return String.pack(ns+':'+name, ctx)
+		return String.pack(ns+':'+name, ctx=ctx)
 
 class _VarIntBase:
 	@classmethod
-	def read(cls, c, ctx=None):
+	def read(cls, c, *, ctx=None):
 		r = int()
 		i = int()
 		for i in range(cls.length):
@@ -93,7 +103,7 @@ class _VarIntBase:
 		return r
 
 	@classmethod
-	def pack(cls, v, ctx=None):
+	def pack(cls, v, *, ctx=None):
 		r = bytearray()
 		while (True):
 			c = v & (1 << 7)-1
@@ -108,42 +118,42 @@ class VarInt(_VarIntBase):
 	length = 5
 
 	@classmethod
-	def read(cls, c, ctx=None):
-		return ctypes.c_int(super().read(c, ctx)).value
+	def read(cls, c, *, ctx=None):
+		return ctypes.c_int(super().read(c, ctx=ctx)).value
 
 	@classmethod
-	def pack(cls, v, ctx=None):
-		return super().pack(ctypes.c_uint(v).value, ctx)
+	def pack(cls, v, *, ctx=None):
+		return super().pack(ctypes.c_uint(v).value, ctx=ctx)
 
 class VarLong(_VarIntBase):
 	length = 10
 
 	@classmethod
-	def read(cls, c, ctx=None):
-		return ctypes.c_long(super().read(c, ctx)).value
+	def read(cls, c, *, ctx=None):
+		return ctypes.c_long(super().read(c, ctx=ctx)).value
 
 	@classmethod
-	def pack(cls, v, ctx=None):
-		return super().pack(ctypes.c_ulong(v).value, ctx)
+	def pack(cls, v, *, ctx=None):
+		return super().pack(ctypes.c_ulong(v).value, ctx=ctx)
 
 class EntityMetadata: # TODO: https://wiki.vg/Entity_metadata#Entity_Metadata_Format
 	@staticmethod
-	def read(cls, c, ctx=None):
+	def read(cls, c, *, ctx=None):
 		r = dict()
 		while (True):
-			b = UByte.read(c, ctx)
+			b = UByte.read(c, ctx=ctx)
 			if (b == 127): break
 			k, t = b & 0x1F, b >> 5
 			r[k] = (Byte, Short, Int, Float, String, Slot, Struct (
 				x = Int,
 				y = Int,
 				z = Int
-			))[t].read(c, ctx)
+			))[t].read(c, ctx=ctx)
 		return r
 
 	### TODO:
 	#@classmethod
-	#def pack(cls, v, ctx=None):
+	#def pack(cls, v, *, ctx=None):
 	#	r = bytearray()
 	#	for k, v in v.items():
 	#		r += Byte.pack((cls.types.index(type(v)) << 5 | k & 0x1F) & 0xFF) + 
@@ -151,19 +161,19 @@ class EntityMetadata: # TODO: https://wiki.vg/Entity_metadata#Entity_Metadata_Fo
 
 class NBT:
 	@staticmethod
-	def read(c, ctx=None):
+	def read(c, *, ctx=None):
 		return nbt.NBTFile(buffer=c.makefile())
 
 	@staticmethod
-	def pack(v, ctx=None):
+	def pack(v, *, ctx=None):
 		r = io.BytesIO()
 		v.write_file(buffer=r)
 		return r.getvalue()
 
 class Position:
 	@staticmethod
-	def read(c, ctx=None):
-		v = ULong.read(c, ctx)
+	def read(c, *, ctx=None):
+		v = ULong.read(c, ctx=ctx)
 		x = v >> 38
 		y = v & 0xFFF
 		z = v << 26 >> 38
@@ -173,7 +183,7 @@ class Position:
 		return (x, y, z)
 
 	@staticmethod
-	def pack(v, ctx=None):
+	def pack(v, *, ctx=None):
 		x, y, z = map(int, v)
 		return ULong.pack(
 			((x & 0x3FFFFFF) << 38) |
@@ -185,11 +195,11 @@ class Angle(Byte): pass
 
 class UUID:
 	@staticmethod
-	def read(c, ctx=None):
+	def read(c, *, ctx=None):
 		return uuid.UUID(bytes=c.read(16))
 
 	@staticmethod
-	def pack(v, ctx=None):
+	def pack(v, *, ctx=None):
 		return v.bytes
 
 @staticitemget
@@ -197,36 +207,38 @@ class Fixed:
 	def __init__(self, type, fracbits):
 		self.type, self.fracbits = type, fracbits
 
-	def read(self, c, ctx=None):
-		return self.type.read(c, ctx) / (1 << self.fracbits)
+	def read(self, c, *, ctx=None):
+		return self.type.read(c, ctx=ctx) / (1 << self.fracbits)
 
-	def pack(self, v, ctx=None):
-		return self.type.pack(int(v*(1 << self.fracbits)), ctx)
+	def pack(self, v, *, ctx=None):
+		return self.type.pack(int(v*(1 << self.fracbits)), ctx=ctx)
 
 @staticitemget
 class Optional:
 	def __init__(self, type, flag_name, flag_values=None):
 		self.type, self.flag_name = type, flag_name
 
-	def read(self, c, ctx=None):
+	def read(self, c, *, ctx=None):
 		f = ctx[self.flag_name]
-		if (f in self.flag_values if (self.flag_values is not None) else f): return self.type.read(c, ctx)
+		if (f in self.flag_values if (self.flag_values is not None) else f): return self.type.read(c, ctx=ctx)
 
-	def pack(self, v, ctx=None):
+	def pack(self, v, *, ctx=None):
 		f = ctx[self.flag_name]
-		if (f in self.flag_values if (self.flag_values is not None) else f): return self.type.pack(v, ctx)
+		if (f in self.flag_values if (self.flag_values is not None) else f): return self.type.pack(v, ctx=ctx)
 		return b''
 
 @staticitemget
 class Array:
+	_default = []
+
 	def __init__(self, type, count):
 		self.type, self.count = type, count
 
-	def read(self, c, ctx=None):
-		return [self.type.read(c, ctx) for _ in range(ctx[self.count] if (isinstance(self.count, 'str')) else self.count)]
+	def read(self, c, *, ctx=None):
+		return self.type.readn(c, ctx[self.count] if (isinstance(self.count, str)) else self.count, ctx=ctx)
 
-	def pack(self, v, ctx=None):
-		return bytes().join(self.type.pack(i) for i in v)
+	def pack(self, v, *, ctx=None):
+		return self.type.packn(ctx[self.count] if (isinstance(self.count, str)) else self.count, *v, ctx=ctx)
 
 @staticitemget
 class Enum:
@@ -238,13 +250,13 @@ class Enum:
 		self._default = _default
 		return self
 
-	def read(self, c, ctx=None):
-		return self._type.read(c, ctx)
+	def read(self, c, *, ctx=None):
+		return self._type.read(c, ctx=ctx)
 
-	def pack(self, v, ctx=None):
+	def pack(self, v, *, ctx=None):
 		try: v = getattr(self, v)
 		except (TypeError, AttributeError): pass
-		return self._type.pack(v, ctx)
+		return self._type.pack(v, ctx=ctx)
 @staticitemget
 class Flags(Enum.f): pass
 
@@ -257,11 +269,21 @@ class Struct:
 		except KeyError: pass
 		raise AttributeError(x)
 
-	def read(self, c, ctx=None):
-		return Sdict({k: v.read(c, ctx) for k, v in self.fields.items()})
+	def read(self, c, *, ctx=None):
+		r = Sdict()
+		if (ctx is None): ctx = r
+		for k, v in self.fields.items():
+			r[k] = v.read(c, ctx=ctx)
+		return copy.deepcopy(r) if (ctx is r) else r
 
-	def pack(self, v, ctx=None):
-		return bytes().join(self.fields[k].pack(v[k] if (k in v) else self.fields[k]._default, ctx) for k in Slist((*v, *self.fields)).uniquize() if k in self.fields)
+	def pack(self, v, *, ctx=None):
+		if (ctx is None): ctx = Sdict()
+		r = bytearray()
+		for k in Slist((*v, *self.fields)).uniquize():
+			if (k not in self.fields): continue
+			ctx[k] = v[k] if (k in v) else self.fields[k]._default
+			r += self.fields[k].pack(ctx[k], ctx=ctx)
+		return bytes(r)
 
 class Packet:
 	__slots__ = ('state', 'pid', 'struct')
@@ -394,6 +416,7 @@ S.Player = Packet(PLAY, 0x03,
 S.PlayerPosition = Packet(PLAY, 0x04,
 	x = Double,
 	y = Double,
+	head_y = Double,
 	z = Double,
 	on_ground = Bool,
 )
@@ -407,6 +430,7 @@ S.PlayerLook = Packet(PLAY, 0x05,
 S.PlayerPositionAndLook = Packet(PLAY, 0x06,
 	x = Double,
 	y = Double,
+	head_y = Double,
 	z = Double,
 	yaw = Float,
 	pitch = Float,
@@ -907,7 +931,7 @@ C.BlockChange = Packet(PLAY, 0x23,
 	x = Int,
 	y = UByte,
 	z = Int,
-	type = VarInt,
+	id = VarInt,
 	data = UByte,
 )
 
@@ -916,7 +940,7 @@ C.BlockAction = Packet(PLAY, 0x24,
 	y = UByte,
 	z = Int,
 	data = Array[UByte, 2], # https://wiki.vg/Block_Actions
-	type = VarInt,
+	id = VarInt,
 )
 
 C.BlockBreakAnimation = Packet(PLAY, 0x25,

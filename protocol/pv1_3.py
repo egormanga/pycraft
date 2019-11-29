@@ -4,7 +4,7 @@
 from .pv0 import *; S, C = ver()
 
 PVs = {1, 2, 3}
-MCV = '13w42a-1.7.1'
+MCV = ('13w42a', '1.7.1')
 
 
 """ Play"""

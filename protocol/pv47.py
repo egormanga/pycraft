@@ -4,7 +4,7 @@
 from .pv5 import *; S, C = ver()
 
 PVs = {47}
-MCV = '1.8-1.8.9'
+MCV = ('1.8', '1.8.9')
 
 # TODO:
 """
@@ -375,14 +375,14 @@ C.UseBed = Packet(PLAY, 0x0A,
 
 C.BlockChange = Packet(PLAY, 0x23,
 	pos = Position,
-	type = VarInt,
+	id = VarInt,
 	data = UByte,
 )
 
 C.BlockAction = Packet(PLAY, 0x24,
 	pos = Position,
 	data = Array[UByte, 2], # https://wiki.vg/Block_Actions
-	type = VarInt,
+	id = VarInt,
 )
 
 C.BlockBreakAnimation = Packet(PLAY, 0x25,
