@@ -206,6 +206,7 @@ def handleClientSettings(server, c, p):
 
 @apmain
 @aparg('ips', metavar='<serverlist>', type=argparse.FileType('r'))
+@aparg('-p', '--port', metavar='port', type=int, default=25565)
 def main(cargs):
 	global lobby_userdata
 	lobby_userdata = dict()
@@ -215,7 +216,10 @@ def main(cargs):
 	db.register('lobby_userdata')
 	db.load()
 
-	server = MCLobby([tuple(cast(str, int)(i.split(':'))) for i in cargs.ips], lobby_userdata, config=LobbyConfig)
+	class config(LobbyConfig):
+		port = cargs.port
+
+	server = MCLobby([tuple(cast(str, int)(i.strip().split(':'))) for i in cargs.ips if i.strip()[:1] not in '#'], lobby_userdata, config=config)
 	server.start()
 	while (True):
 		try: server.handle()
