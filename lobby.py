@@ -8,7 +8,7 @@ logstart('Lobby')
 
 class LobbyConfig(ServerConfig):
 	version_name = 'PyCraft Lobby {}'
-	default_gamemode = 3
+	default_gamemode = 1
 	difficulty = 0
 	players_max = -1
 	reduced_debug_info = True
