@@ -205,7 +205,7 @@ def handleClientSettings(server, c, p):
 	server.lobby_clientsettings[c] = p
 
 @apmain
-@aparg('ips', metavar='<serverlist>', type=argparse.FileType('r'))
+@aparg('serverlist', metavar='<serverlist>', type=argparse.FileType('r'))
 @aparg('-p', '--port', metavar='port', type=int, default=25565)
 def main(cargs):
 	global lobby_userdata
@@ -216,10 +216,13 @@ def main(cargs):
 	db.register('lobby_userdata')
 	db.load()
 
+	ips = [tuple(cast(str, int)(i.strip().split(':'))) for i in cargs.serverlist if i.strip()[:1] not in '#']
+
 	class config(LobbyConfig):
 		port = cargs.port
+		motd = f"§d§lPyCraft§f Lobby§r of §{'bc'[not ips]}§l{decline(len(ips), ('server', 'servers'), sep='§r ')}"
 
-	server = MCLobby([tuple(cast(str, int)(i.strip().split(':'))) for i in cargs.ips if i.strip()[:1] not in '#'], lobby_userdata, config=config)
+	server = MCLobby(ips, lobby_userdata, config=config)
 	server.start()
 	while (True):
 		try: server.handle()
