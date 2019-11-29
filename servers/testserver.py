@@ -118,7 +118,7 @@ def main(cargs):
 	setlogfile('PyCraft_testserver.log')
 
 	class config(TestServerConfig):
-		port = cargs.port
+		server_port = cargs.port
 
 	server = TestServer(config=config)
 	server.start()

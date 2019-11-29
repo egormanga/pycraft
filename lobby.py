@@ -244,7 +244,7 @@ def main(cargs):
 	ips = [tuple(cast(str, int)(i.strip().split(':'))) for i in cargs.serverlist if i.strip()[:1] not in '#']
 
 	class config(LobbyConfig):
-		port = cargs.port
+		server_port = cargs.port
 		motd = f"§d§lPyCraft§f Lobby§r of §{'bc'[not ips]}§l{decline(len(ips), ('server', 'servers'), sep='§r ')}"
 
 	server = MCLobby(ips, lobby_userdata, config=config, nolog=False)
