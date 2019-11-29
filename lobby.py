@@ -137,22 +137,26 @@ def handleChatMessage(server, c, p):
 		try: server_ip = server.lobby_serverips[int(p.message)-(int(p.message) > 0)]
 		except Exception as ex: raise Disconnect({'text': f"{type(ex).__name__}: ", 'color': 'red', 'bold': True}, {'text': str(ex)})
 
-		cs = server.lobby_clientsettings.pop(c)
+		try: cs = server.lobby_clientsettings.pop(c)
+		except KeyError: cs = None
 		class config(ClientConfig):
 			username = c.player.name
-			locale = cs.locale
-			difficulty = cs.difficulty
-			view_distance = cs.view_distance
-			chat_mode = cs.chat_flags & 0b11
-			chat_colors = cs.chat_colors
-			skin_parts = cs.skin_parts if ('skin_parts' in cs) else cs.show_cape
-			main_hand = cs.get('main_hand', 1)
+			if (cs is not None):
+				locale = cs.locale
+				difficulty = cs.difficulty
+				view_distance = cs.view_distance
+				chat_mode = cs.chat_flags & 0b11
+				chat_colors = cs.chat_colors
+				skin_parts = cs.skin_parts if ('skin_parts' in cs) else cs.show_cape
+				main_hand = cs.get('main_hand', 1)
 
-		sc = Builder(MCClient, config=config, pv=c.pv, nolog=True) \
+		try: sc = Builder(MCClient, config=config, pv=c.pv, nolog=True) \
 			.connect(server_ip) \
 			.login() \
 			.block(pid=C.JoinGame) \
 			.build()
+		except NoServer: raise Disconnect("This server is offline.", color='red')
+
 		#C.Respawn.send(c,
 		#	dimension = (sc.player.dimension+1) % 2,
 		#	difficulty = sc.difficulty,
@@ -168,6 +172,7 @@ def handleChatMessage(server, c, p):
 		#	on_ground = sc.player.pos.on_ground,
 		#	flags = 0,
 		#)
+
 		if (not (c.player.dimension == sc.player.dimension
 		    and server.env.difficulty == sc.difficulty
 		    and c.player.gamemode == sc.player.gamemode
@@ -178,6 +183,7 @@ def handleChatMessage(server, c, p):
 				gamemode = sc.player.gamemode,
 				level_type = sc.level_type,
 			)
+
 		sc.socket.setblocking(False)
 		c.socket.setblocking(False)
 		server.lobby_playerstate[c] = sc.socket
@@ -193,13 +199,21 @@ def handleChatMessage(server, c, p):
 	)
 
 	for ii, i in enumerate(server.lobby_serverips):
-		s = Builder(MCClient, nolog=True).connect(i).build().status()
-		C.ChatMessage.send(c,
-			message = {'text': '', 'extra': [
-				{'text': f"[{ii+1}]", 'bold': True},
-				{'text': f" {s['description']} ({s['players']['online']}/{s['players']['max']}, {s['version']['name']})"},
-			]},
-		)
+		try: s = Builder(MCClient, nolog=True).connect(i).build().status()
+		except NoServer:
+			C.ChatMessage.send(c,
+				message = {'text': '', 'extra': [
+					{'text': f"[{ii+1}]", 'bold': True},
+					{'text': "<offline>"},
+				]},
+			)
+		else:
+			C.ChatMessage.send(c,
+				message = {'text': '', 'extra': [
+					{'text': f"[{ii+1}]", 'bold': True},
+					{'text': f" {s['description']} ({s['players']['online']}/{s['players']['max']}, {s['version']['name']})"},
+				]},
+			)
 
 @MCLobby.handler(S.ClientSettings)
 def handleClientSettings(server, c, p):
