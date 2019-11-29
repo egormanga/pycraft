@@ -189,9 +189,9 @@ def handleChatMessage(server, c, p):
 				level_type = sc.level_type,
 			)
 
-		#sc.socket.setblocking(False)
-		#c.socket.setblocking(False)
-		server.lobby_playerstate[c] = sc#.socket
+		sc.socket.setblocking(False)
+		c.socket.setblocking(False)
+		server.lobby_playerstate[c] = sc.socket
 		return
 
 	C.ChatMessage.send(c,
