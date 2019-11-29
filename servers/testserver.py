@@ -112,16 +112,22 @@ def handlePlayerPositionAndLook(server, c, p):
 			on_ground = c.player.pos.on_ground,
 		)
 
-def main():
+@apmain
+@aparg('-p', '--port', metavar='port', type=int, default=25565)
+def main(cargs):
 	setlogfile('PyCraft_testserver.log')
-	server = TestServer(config=TestServerConfig)
+
+	class config(TestServerConfig):
+		port = cargs.port
+
+	server = TestServer(config=config)
 	server.start()
 	while (True):
 		try: server.handle()
 		#except Exception as ex: exception(ex)
 		except KeyboardInterrupt: sys.stderr.write('\r'); server.stop(); exit()
 
-if (__name__ == '__main__'): logstarted(); exit(main())
+if (__name__ == '__main__'): exit(main())
 else: logimported()
 
 # by Sdore, 2019

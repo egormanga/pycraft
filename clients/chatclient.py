@@ -10,6 +10,10 @@ setlogfile('PyCraft_chatclient.log')
 class ChatClient(MCClient):
 	handlers = Handlers(MCClient.handlers)
 
+@ChatClient.handler(C.ChatMessage)
+def handleChatMessage(s, p):
+	log('\033[0m'+formatChat(p.message, ansi=True), ll='[\033[0mChat\033[0;96m]')
+
 @apmain
 @aparg('ip', metavar='<ip>')
 @aparg('port', nargs='?', type=int, default=25565)
@@ -41,10 +45,6 @@ def main(cargs):
 		except NoServer as ex: exit(ex)
 		except Exception as ex: exception(ex)
 		except KeyboardInterrupt as ex: sys.stderr.write('\r'); client.disconnect(); exit(ex)
-
-@ChatClient.handler(C.ChatMessage)
-def handleChatMessage(s, p):
-	log('\033[0m'+formatChat(p.message, ansi=True), ll='[\033[0mChat\033[0;96m]')
 
 if (__name__ == '__main__'): exit(main())
 else: logimported()

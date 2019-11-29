@@ -14,6 +14,11 @@ tokens.require('access_token', group_scope_all)
 class VKChatClient(MCClient):
 	handlers = Handlers(MCClient.handlers)
 
+@VKChatClient.handler(C.ChatMessage)
+def handleChatMessage(s, p):
+	log('\033[0m'+formatChat(p.message, ansi=True), ll='[\033[0mChat\033[0;96m]')
+	if (p.message.get('translate') == 'chat.type.announcement' and p.message['with'][0] != client.config.username): send(2000000000+chat_id, formatChat(p.message))
+
 @apmain
 @aparg('group_id', metavar='<group_id>')
 @aparg('chat_id', metavar='<chat_id>', type=int)
@@ -56,11 +61,6 @@ def main(cargs):
 		except NoServer as ex: exit(ex)
 		except Exception as ex: exception(ex, nolog=True)
 		except KeyboardInterrupt as ex: sys.stderr.write('\r'); client.disconnect(); exit(ex)
-
-@VKChatClient.handler(C.ChatMessage)
-def handleChatMessage(s, p):
-	log('\033[0m'+formatChat(p.message, ansi=True), ll='[\033[0mChat\033[0;96m]')
-	if (p.message.get('translate') == 'chat.type.announcement' and p.message['with'][0] != client.config.username): send(2000000000+chat_id, formatChat(p.message))
 
 @command_unknown
 def c_unknown():
