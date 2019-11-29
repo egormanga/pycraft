@@ -65,7 +65,9 @@ class PacketBuffer:
 		""" 'Header' because the function returns tuple (length, pid) and for backward compatibility. It actually puts the packet into the buffer. """
 		if (self.state == DISCONNECTED): raise NoServer()
 		try: self.packet = self.IncomingPacket(self.socket, self.compression)
-		except OSError as ex: self.setstate(DISCONNECTED); raise NoPacket()
+		except OSError as ex:
+			if (ex.errno != 11): self.setstate(DISCONNECTED)
+			raise NoPacket()
 		if (not nolog and not self.nolog):
 			log(2, f"Reading packet: length={self.packet.length}, pid={hex(self.packet.pid)}", nolog=True)
 			log(3, self.packet.buffer, raw=True, nolog=True)
@@ -84,7 +86,8 @@ class PacketBuffer:
 			log(2, f"Sending packet: length={len(data)}, pid={hex(pid)}", nolog=True)
 			log(3, data, raw=True, nolog=True)
 		try: return self.socket.sendall(writeVarInt(len(p)) + p)
-		except OSError as ex: self.setstate(DISCONNECTED)
+		except OSError as ex:
+			if (ex.errno != 11): self.setstate(DISCONNECTED)
 class NoServer(Exception): pass
 class NoPacket(Exception): pass
 

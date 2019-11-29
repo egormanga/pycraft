@@ -25,26 +25,36 @@ class MCLobby(MCServer):
 
 	def handle_client_packet(self, c):
 		s = self.lobby_playerstate[c]
-		if (isinstance(s, MCClient)):
-			try: l, pid = s.readPacketHeader()
-			except NoServer: c.socket.close(); del self.lobby_playerstate[c]; return
-			except NoPacket: pass
-			else: c.sendPacket(pid, s.packet.read(l))
-
-			try: l, pid = c.readPacketHeader()
-			except NoServer: s.disconnect(); del self.lobby_playerstate[c]; return
-			except NoPacket: pass
-			else: s.sendPacket(pid, c.packet.read(l))
+		if (not isinstance(s, (bool, str))): self.pass_packets(c, s)
 		else: super().handle_client_packet(c)
 
-	def tick(self):
-		super().tick()
+	def pass_packets(self, c, s):
+		if (isinstance(s, MCClient)):
+			#try: pid, p = s.handle()
+			#except NoServer: c.disconnect(); s.disconnect(); del self.lobby_playerstate[c]; return
+			#else:
+			#	if (p is None): continue
+			#	elif (isinstance(p, dict)): s.handlers[s, pid].send(c, **p)
+			#	else: c.sendPacket(pid, p)
 
-		for c, s in self.lobby_playerstate.items():
-			if (not isinstance(s, MCClient)): continue
-			try: pid, p = s.handle()
-			except NoServer: c.socket.close(); del self.lobby_playerstate[c]; return
-			else: c.sendPacket(pid, p)
+			try: l, pid = s.readPacketHeader(nolog=True)
+			except NoServer: c.disconnect(); del self.lobby_playerstate[c]
+			except NoPacket: pass
+			else: c.sendPacket(pid, s.packet.read(l), nolog=True)
+
+			try: l, pid = c.readPacketHeader(nolog=True)
+			except NoServer: s.disconnect(); del self.lobby_playerstate[c]
+			except NoPacket: pass
+			else: s.sendPacket(pid, c.packet.read(l), nolog=True)
+		elif (isinstance(s, socket.socket)):
+			try:
+				try: c.socket.send(s.recv(2048))
+				except OSError as ex:
+					if (ex.errno != 11): raise
+				try: s.send(c.socket.recv(2048))
+				except OSError as ex:
+					if (ex.errno != 11): raise
+			except OSError: c.socket.close(); s.close(); del self.lobby_playerstate[c]
 
 @MCLobby.handler(S.LoginStart)
 def handleLoginStart(server, c, p):
@@ -142,19 +152,34 @@ def handleChatMessage(server, c, p):
 			.login() \
 			.block(pid=C.JoinGame) \
 			.build()
-		C.Respawn.send(c,
-			dimension = (sc.player.dimension+1) % 2,
-			difficulty = sc.difficulty,
-			gamemode = sc.player.gamemode,
-			level_type = sc.level_type,
-		)
-		C.Respawn.send(c,
-			dimension = sc.player.dimension,
-			difficulty = sc.difficulty,
-			gamemode = sc.player.gamemode,
-			level_type = sc.level_type,
-		)
-		server.lobby_playerstate[c] = sc
+		#C.Respawn.send(c,
+		#	dimension = (sc.player.dimension+1) % 2,
+		#	difficulty = sc.difficulty,
+		#	gamemode = sc.player.gamemode,
+		#	level_type = sc.level_type,
+		#)
+		#C.PlayerPositionAndLook.send(c,
+		#	x = sc.player.pos.x,
+		#	y = sc.player.pos.y,
+		#	z = sc.player.pos.z,
+		#	yaw = sc.player.pos.yaw,
+		#	pitch = sc.player.pos.pitch,
+		#	on_ground = sc.player.pos.on_ground,
+		#	flags = 0,
+		#)
+		if (not (c.player.dimension == sc.player.dimension
+		    and server.env.difficulty == sc.difficulty
+		    and c.player.gamemode == sc.player.gamemode
+		    and server.config.level_type == sc.level_type)):
+			C.Respawn.send(c,
+				dimension = sc.player.dimension,
+				difficulty = sc.difficulty,
+				gamemode = sc.player.gamemode,
+				level_type = sc.level_type,
+			)
+		sc.socket.setblocking(False)
+		c.socket.setblocking(False)
+		server.lobby_playerstate[c] = sc.socket
 		return
 
 	C.ChatMessage.send(c,
@@ -180,6 +205,7 @@ def handleClientSettings(server, c, p):
 	server.lobby_clientsettings[c] = p
 
 def main():
+	global lobby_userdata
 	lobby_userdata = dict()
 
 	setlogfile('PyCraft_lobby.log')
@@ -191,7 +217,7 @@ def main():
 	server.start()
 	while (True):
 		try: server.handle()
-		#except Exception as ex: exception(ex)
+		except Exception as ex: exception(ex)
 		except KeyboardInterrupt: sys.stderr.write('\r'); server.stop(); exit()
 
 if (__name__ == '__main__'): logstarted(); exit(main())

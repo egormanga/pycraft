@@ -34,7 +34,7 @@ class MCClient(PacketBuffer):
 		self.socket.settimeout(10)
 		try: self.socket.connect(self.addr)
 		except OSError as ex: raise NoServer(ex)
-		self.socket.setblocking(True)
+		self.socket.settimeout(0.001)
 		super().__init__()
 		self.setstate(HANDSHAKING)
 		if (not nolog and not self.nolog): log(f"Connected to server {self.addr[0]}:{self.addr[1]}.")
@@ -158,9 +158,9 @@ def handleJoinGame(s, p):
 def handleDisconnect(s, p):
 	s.disconnect(p.reason)
 
-@MCClient.handler(C.ChatMessage)
-def handleChatMessage(s, p):
-	if (not s.nolog): log(p.message)
+#@MCClient.handler(C.ChatMessage)
+#def handleChatMessage(s, p):
+#	if (not s.nolog): log(p.message)
 
 @apmain
 @aparg('ip', metavar='<ip>')

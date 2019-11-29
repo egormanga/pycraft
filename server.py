@@ -11,6 +11,7 @@ class ServerConfig:
 	level_type = 'default'
 	compression_threshold = -1
 	keepalive_interval = 15
+	tickspeed = 1/20
 	reduced_debug_info = False
 	server_ip = ''
 	server_port = 25565
@@ -48,8 +49,9 @@ class MCServer:
 		self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, True)
 		self.socket.bind((self.config.server_ip, self.config.server_port))
 		#self.socket.setblocking(False)
-		self.socket.settimeout(0.01)
+		self.socket.settimeout(0.001)
 		self.ticks = int()
+		self.lasttick = int()
 		self.startedAt = time.time()
 
 	@property
@@ -65,8 +67,9 @@ class MCServer:
 		log("Server stopped.")
 
 	def handle(self):
-		self.tick()
-		#time.sleep(0.01) # TODO FIXME optimize instead of slowing down (preventing 100% CPU load)
+		if (time.time() >= self.lasttick+self.config.tickspeed):
+			self.tick()
+			self.lasttick = time.time()
 
 		try: self.clients.append(Client(self, *self.socket.accept()))
 		except OSError: pass
