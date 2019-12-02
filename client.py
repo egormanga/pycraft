@@ -44,7 +44,10 @@ class MCClient(PacketBuffer):
 	def disconnect(self, reason=None, *, nolog=False):
 		try: self.socket.shutdown(socket.SHUT_WR)
 		except OSError: pass
-		self.socket.close()
+		try: self.socket.setblocking(True)
+		except OSError: pass
+		try: self.socket.close()
+		except OSError: pass
 		self.setstate(DISCONNECTED)
 		if (not nolog and not self.nolog):
 			log(f"""Disconnected from server {self.addr[0]}:{self.addr[1]}{':' if (reason is not None) else '.'}""")

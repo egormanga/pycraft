@@ -1,5 +1,6 @@
 #!/usr/bin/python3
 # PyCraft Protocol v4 (1.7.2-1.7.5)
+# https://wiki.vg/Protocol?oldid=5486
 
 from .pv1_3 import *; S, C = ver()
 

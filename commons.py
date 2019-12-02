@@ -33,12 +33,16 @@ class _socket(socket.socket):
 				continue
 			n -= len(c)
 			r += c
-		return r
+		return bytes(r)
+
+	def peek(self, n=1, flags=0):
+		flags |= socket.MSG_PEEK
+		return self.read(n, flags)
 socket.socket = _socket
 
 class PacketBuffer:
-	class IncomingPacket:
-		__slots__ = ('compression', 'buffer', 'pid')
+	class IncomingPacket(io.BytesIO):
+		__slots__ = ('compression', 'pid')
 
 		def __init__(self, socket, compression):
 			self.compression = compression
@@ -47,19 +51,28 @@ class PacketBuffer:
 			if (self.compression >= 0):
 				pl = readVarInt(socket)
 				l -= len(writeVarInt(pl))
-				self.buffer = socket.read(l)
-				if (pl): self.buffer = zlib.decompress(self.buffer)
-			else: self.buffer = socket.read(l)
+				buffer = socket.read(l)
+				if (pl): buffer = zlib.decompress(buffer)
+			else: buffer = socket.read(l)
+			super().__init__(buffer)
 			self.pid = readVarInt(self)
 
 		def read(self, l):
-			if (self.length < l): raise BufferError('Not enough data')
-			r, self.buffer = self.buffer[:l], self.buffer[l:]
-			return r
+			if (self.length < l): raise NoPacket('Not enough data')
+			return super().read(l)
+
+		def peek(self, l=1):
+			if (self.length < l): raise NoPacket('Not enough data')
+			p = self.tell()
+			return self.getbuffer()[p:p+l].tobytes()
+
+		@property
+		def buffer(self):
+			return self.getbuffer()[self.tell():].tobytes()
 
 		@property
 		def length(self):
-			return len(self.buffer)
+			return len(self.getbuffer())
 
 	__slots__ = ('socket', 'compression', 'packet')
 
@@ -70,11 +83,18 @@ class PacketBuffer:
 		self.packet = None
 
 	def __del__(self):
-		try: self.socket.close()
-		except (OSError, AttributeError): pass
+		try:
+			try: self.socket.setblocking(True)
+			except OSError: pass
+			try: self.socket.close()
+			except OSError: pass
+		except AttributeError: pass
 
 	def read(self, l):
 		return self.packet.read(l)
+
+	def peek(self, l=1):
+		return self.packet.peek(l)
 
 	def readPacketHeader(self, *, nolog=False):
 		""" 'Header' because the function returns tuple (length, pid) and for backward compatibility. It actually puts the packet into the buffer. """
@@ -135,17 +155,16 @@ class MojangAPI:
 	@classmethod
 	@cachedfunction
 	def profile(cls, *names):
-		return requests.post(f"{cls.baseurl}/profiles/minecraft", json=names).json()
+		r = requests.post(f"{cls.baseurl}/profiles/minecraft", json=names).json()
+		r['id'] = UUID(r['id'])
+		return r
 
 class Updatable(metaclass=SlotsMeta):
 	def __init__(self, **kwargs):
-		for i in kwargs.items():
-			setattr(self, *i)
+		self.update(**kwargs)
 
-	def update(self, data={}, **kwdata):
-		data.update(kwdata)
-		for k, v in data.items():
-			if (k in ('self', 'kwargs')): continue
+	def update(self, **kwargs):
+		for k, v in kwargs.items():
 			setattr(self, k, v)
 
 class Position(Updatable):
@@ -157,7 +176,7 @@ class Position(Updatable):
 	on_ground: bool
 
 	def __repr__(self):
-		return f"({self.x}, {self.y}, {self.z})"
+		return repr((self.x, self.y, self.z))
 
 	@property
 	def head_y(self):
@@ -173,8 +192,23 @@ class Position(Updatable):
 		if (pos[3:]): self.yaw, self.pitch = pos[3:]
 
 	def updatepos(self, x, y, z, yaw, pitch, on_ground=None, flags=0b00000):
-		self.setpos(self.pos[ii]+i if (flags & (1 << ii)) else i for ii, i in enumerate((x, y, z, yaw, pitch)))
+		self.pos = tuple(self.pos[ii]+i if (flags & (1 << ii)) else i for ii, i in enumerate((x, y, z, yaw, pitch)))
 		if (on_ground is not None): self.on_ground = on_ground
+
+class Slot(Updatable):
+	id: -1
+	count: int
+	nbt: nbt.NBTFile
+
+	def __repr__(self):
+		return f"<Slot #{self.id}{f'*{self.count}' if (self.count > 1) else ''}>" if (self.id != -1) else '<Slot (empty)>'
+
+	def __bool__(self):
+		return bool(self.id or self.count or self.nbt)
+
+	def set(self, id, count=1, *, nbt=None):
+		if (id == 0): count = 0
+		self.id, self.count, self.nbt = id, count, nbt or globals()['nbt'].NBTFile()
 
 class Entity(Updatable):
 	eid: -1
@@ -195,6 +229,8 @@ class Player(Entity):
 	uuid: None
 	name: str
 	gamemode: int
+	inventory: [Slot() for _ in range(45)]
+	selected_slot: int
 
 	def __repr__(self):
 		return f"<Player '{self.name}' at {self.pos}>"

@@ -1,5 +1,6 @@
 #!/usr/bin/python3
 # PyCraft Protocol v5 (1.7.6-1.7.10)
+# https://wiki.vg/Protocol?oldid=6003
 
 from .pv4 import *; S, C = ver()
 
@@ -21,9 +22,9 @@ C.SpawnPlayer = Packet(PLAY, 0x0C,
 		value = String,
 		signature = String,
 	), 'data_count'],
-	x = Int,
-	y = Int,
-	z = Int,
+	x = Fixed[Int, 5],
+	y = Fixed[Int, 5],
+	z = Fixed[Int, 5],
 	yaw = Byte,
 	pitch = Byte,
 	item = Short,

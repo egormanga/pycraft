@@ -1,9 +1,10 @@
 #!/usr/bin/python3
 # PyCraft Protocol v47 (1.8-1.8.9)
+# https://wiki.vg/Protocol?oldid=7368
 
 from .pv5 import *; S, C = ver()
 
-PVs = {47}
+PVs = ()#{47} # TODO FIXME
 MCV = ('1.8', '1.8.9')
 
 # TODO:

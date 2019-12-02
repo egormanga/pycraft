@@ -33,6 +33,14 @@ class Client(PacketBuffer):
 		self.lastkeepalive_id = 0
 		self.state = HANDSHAKING
 
+	def disconnect(self):
+		try: self.socket.shutdown(socket.SHUT_WR)
+		except OSError: pass
+		try: self.socket.setblocking(True)
+		except OSError: pass
+		try: self.socket.close()
+		except OSError: pass
+
 	def setstate(self, state):
 		self.state = State(state)
 		self.nextkeepalive = time.time()+self.server.config.keepalive_interval
@@ -59,6 +67,10 @@ class MCServer:
 	def players(self):
 		return [i.player for i in self.clients if i.player]
 
+	@property
+	def playing(self):
+		return [i for i in self.clients if i.state == PLAY]
+
 	def start(self):
 		self.socket.listen()
 		log("Server started.")
@@ -79,6 +91,7 @@ class MCServer:
 		for ii, c in enumerate(self.clients):
 			if (c.socket._closed): c.state = DISCONNECTED
 			if (c.state == DISCONNECTED):
+				c.disconnect()
 				self.clients.to_discard(ii)
 				log(f"Disconnected: {c.address}")
 				continue
@@ -90,12 +103,12 @@ class MCServer:
 						keepalive_id = c.lastkeepalive_id
 					)
 					c.nextkeepalive = time.time()+self.config.keepalive_interval
-			self.handle_client_packet(c)
+			self.handle_client_packet(c, nolog=self.nolog)
 		self.clients.discard()
 
 	handlers = Handlers()
-	def handle_client_packet(self, c):
-		try: l, pid = c.readPacketHeader()
+	def handle_client_packet(self, c, **kwargs):
+		try: l, pid = c.readPacketHeader(**kwargs)
 		except NoServer: c.setstate(DISCONNECTED); return
 		except NoPacket: return
 		try:
@@ -176,7 +189,7 @@ def handleStatusRequest(server, c, p):
 def handlePing(server, c, p):
 	C.Pong.send(c,
 		payload = p.payload,
-	nolog=False)
+	)
 
 @MCServer.handler(S.LoginStart)
 def handleLoginStart(server, c, p):
@@ -191,7 +204,7 @@ def handleLoginStart(server, c, p):
 		gamemode=server.config.default_gamemode,
 	))
 	C.LoginSuccess.send(c,
-		uuid = str(c.player.uuid),
+		uuid = c.player.uuid,
 		username = c.player.name,
 	)
 	c.setstate(PLAY)
@@ -221,40 +234,6 @@ def handleKeepAlive(server, c, p):
 @MCServer.handler(S.ChatMessage)
 def handleChatMessage(server, c, p):
 	log(c.player.name.join('<>'), p.message)
-
-@MCServer.handler(S.Player)
-def handlePlayer(server, c, p):
-	c.player.pos.update(
-		on_ground = p.on_ground,
-	)
-
-@MCServer.handler(S.PlayerPosition)
-def handlePlayerPosition(server, c, p):
-	c.player.pos.update(
-		x = p.x,
-		y = p.y,
-		z = p.z,
-		on_ground = p.on_ground,
-	)
-
-@MCServer.handler(S.PlayerLook)
-def handlePlayerLook(server, c, p):
-	c.player.pos.update(
-		yaw = p.yaw,
-		pitch = p.pitch,
-		on_ground = p.on_ground,
-	)
-
-@MCServer.handler(S.PlayerPositionAndLook)
-def handlePlayerPositionAndLook(server, c, p):
-	c.player.pos.update(
-		x = p.x,
-		y = p.y,
-		z = p.z,
-		yaw = p.yaw,
-		pitch = p.pitch,
-		on_ground = p.on_ground,
-	)
 
 ### XXX ###
 

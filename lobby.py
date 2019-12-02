@@ -27,10 +27,10 @@ class MCLobby(MCServer):
 		self.lobby_playerstate = Sdict(lambda: False)  # False = authorization, str = register confirmation, True = logged in, other = playing
 		self.lobby_clientsettings = dict()
 
-	def handle_client_packet(self, c):
+	def handle_client_packet(self, c, **kwargs):
 		s = self.lobby_playerstate[c]
 		if (not isinstance(s, (bool, str))): self.pass_packets(c, s)
-		else: super().handle_client_packet(c)
+		else: super().handle_client_packet(c, **kwargs)
 
 	def pass_packets(self, c, s):
 		if (isinstance(s, MCClient)):
@@ -42,12 +42,12 @@ class MCLobby(MCServer):
 			#	else: c.sendPacket(pid, p)
 
 			try: l, pid = s.readPacketHeader(nolog=True)
-			except NoServer: c.disconnect(); del self.lobby_playerstate[c]
+			except NoServer: c.disconnect(); del self.lobby_playerstate[c]; return
 			except NoPacket: pass
 			else: c.sendPacket(pid, s.packet.read(l), nolog=True)
 
 			try: l, pid = c.readPacketHeader(nolog=True)
-			except NoServer: s.disconnect(); del self.lobby_playerstate[c]
+			except NoServer: s.disconnect(); del self.lobby_playerstate[c]; return
 			except NoPacket: pass
 			else: s.sendPacket(pid, c.packet.read(l), nolog=True)
 		elif (isinstance(s, socket.socket)):
@@ -58,17 +58,12 @@ class MCLobby(MCServer):
 				try: s.send(c.socket.recv(2048))
 				except OSError as ex:
 					if (not isinstance(ex, socket.timeout) and ex.errno != socket.EWOULDBLOCK): raise
-			except OSError: c.socket.close(); s.close(); del self.lobby_playerstate[c]
+			except OSError: c.disconnect(); s.setblocking(True); s.close(); del self.lobby_playerstate[c]
 
 @MCLobby.handler(S.LoginStart)
 def handleLoginStart(server, c, p):
 	pv = requireProtocolVersion(c.pv)
 	if (c.pv != pv): raise Disconnect(f"Outdated {'client' if (c.pv < pv) else 'server'}")
-
-	#c.sendPacket(0x03, # Set Compression # TODO
-	#	writeVarInt(server.config.compression_threshold), # Threshold
-	#)
-	#c.compression = server.config.compression_threshold
 
 	try: profile = MojangAPI.profile(p.name)[0]
 	except Exception: profile = {'name': p.name, 'id': uuid3(NAMESPACE_OID, "OfflinePlayer:"+p.name)}
@@ -79,7 +74,7 @@ def handleLoginStart(server, c, p):
 		dimension=-1,
 	))
 	C.LoginSuccess.send(c,
-		uuid = str(c.player.uuid),
+		uuid = c.player.uuid,
 		username = c.player.name,
 	)
 	c.setstate(PLAY)
@@ -247,7 +242,7 @@ def main(cargs):
 		server_port = cargs.port
 		motd = f"§d§lPyCraft§f Lobby§r of §{'bc'[not ips]}§l{decline(len(ips), ('server', 'servers'), sep='§r ')}"
 
-	server = MCLobby(ips, lobby_userdata, config=config, nolog=False)
+	server = MCLobby(ips, lobby_userdata, config=config)
 	server.start()
 	while (True):
 		try: server.handle()
