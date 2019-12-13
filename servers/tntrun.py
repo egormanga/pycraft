@@ -1,15 +1,14 @@
 #!/usr/bin/python3
-# PyCraft test server
+# PyCraft TNT Run server
 
 from utils.nolog import *
 from ..server import *
-logstart('TestServer')
+logstart('TNTRunServer')
 
-class TestServerConfig(ServerConfig):
-	default_gamemode = 1
-	motd = "§d§lPyCraft§f Test Server"
+class TNTRunConfig(ServerConfig):
+	motd = "§d§lPyCraft§f TNT Run"
 
-class TestServer(MCServer):
+class TNTRunServer(MCServer):
 	handlers = Handlers(MCServer.handlers)
 
 	def __init__(self, world, **kwargs):
@@ -18,11 +17,17 @@ class TestServer(MCServer):
 		world.onchunksectioncreate = self.onchunksectioncreate
 		world.onchunkcreate = self.onchunkcreate
 		world.onblockupdate = self.onblockupdate
-		self._playing_track = 2258
+
+	def tick(self):
+		super().tick()
+
+		for p in self.players:
+			if (p.pos.x < 1 and p.pos.z < 1): continue
+			if (p.pos.y == 1): self.world[p.dimension][p.pos.x, p.pos.y-1, p.pos.z] = 0
 
 	def onchunksectioncreate(self, cs):
 		x, z = cs.x//16, cs.z//16
-		pbm = -1#sum(1 << cy for cy in range(16) if cs.chunks.get(cy))
+		pbm = -1
 		abm, cd = cs.chunkdata_bytes[pbm]
 		cd = zlib.compress(cd)
 		for c in self.playing:
@@ -62,24 +67,7 @@ class TestServer(MCServer):
 				data = block.data,
 			)
 
-	@property
-	def playing_track(self):
-		return self._playing_track
-
-	@playing_track.setter
-	def playing_track(self, id):
-		self._playing_track = id
-		for c in self.playing:
-			C.Effect.send(c,
-				eid = 1005,
-				x = 0,
-				y = 0,
-				z = 0,
-				data = self.playing_track,
-				drv = False,
-			)
-
-@TestServer.handler(S.LoginStart)
+@TNTRunServer.handler(S.LoginStart)
 def handleLoginStart(server, c, p):
 	pv = requireProtocolVersion(c.pv)
 	if (c.pv != pv): raise Disconnect(f"Outdated {'client' if (c.pv < pv) else 'server'}")
@@ -120,15 +108,6 @@ def handleLoginStart(server, c, p):
 			size = len(cd),
 			data = cd,
 		)
-	bba = server.entities.add_entity(Entity())
-	bba.pos.pos = (3, 1, 4)
-	C.BlockBreakAnimation.send(c,
-		eid = bba.eid,
-		x = bba.pos.x,
-		y = bba.pos.y,
-		z = bba.pos.z,
-		stage = 9,
-	)
 
 	C.PlayerPositionAndLook.send(c,
 		x = c.player.pos.x,
@@ -139,42 +118,6 @@ def handleLoginStart(server, c, p):
 		on_ground = c.player.pos.on_ground,
 	)
 
-	c.player.inventory[36].set(1)
-	C.WindowItems.send(c,
-		window_id = 0,
-		count = len(c.player.inventory),
-		slots = c.player.inventory,
-	)
-
-	C.Effect.send(c,
-		eid = 1005,
-		x = 0,
-		y = 0,
-		z = 0,
-		data = server.playing_track,
-		drv = False,
-	)
-
-	p_uuid = list(str(uuid.uuid1()))
-	p_uuid[14] = '2' # uuid v2
-	p_uuid = str().join(p_uuid)
-	e = server.entities.add_entity(Entity())
-	e.pos.pos = (10, 2, 10)
-	e.pos.pitch = 180
-	C.SpawnPlayer.send(c,
-		eid = e.eid,
-		uuid = p_uuid,
-		name = 'test',
-		x = e.pos.x,
-		y = e.pos.y,
-		z = e.pos.z,
-		yaw = 256*(e.pos.yaw % 360)/360,
-		pitch = 256*e.pos.pitch/360,
-		item = 10,
-		metadata = PVs[c.pv].EntityMetadata.Human(health=1, has_no_ai=True),
-	)
-
-	emd = {'flags': 0, 'air': 300, 'health': 20.0, 'potion_effect_color': 0, 'potion_effect_ambient': 0, 'number_of_arrows_in_entity': 0, 'human_flags': 0, 'absorption_hearts': 0.0, 'score': 0}
 	for i in server.playing:
 		if (i is c): continue
 		C.SpawnPlayer.send(c,
@@ -187,7 +130,7 @@ def handleLoginStart(server, c, p):
 			yaw = 256*(i.player.pos.yaw % 360)/360,
 			pitch = 256*i.player.pos.pitch/360,
 			item = i.player.inventory[i.player.selected_slot].id,
-			metadata = PVs[c.pv].EntityMetadata.Human(**emd), # TODO
+			metadata = PVs[c.pv].EntityMetadata.Human(health=1), # TODO
 		)
 		C.SpawnPlayer.send(i,
 			eid = c.player.eid,
@@ -199,16 +142,16 @@ def handleLoginStart(server, c, p):
 			yaw = 256*(c.player.pos.yaw % 360)/360,
 			pitch = 256*c.player.pos.pitch/360,
 			item = c.player.inventory[c.player.selected_slot].id,
-			metadata = PVs[i.pv].EntityMetadata.Human(**emd), # TODO
+			metadata = PVs[i.pv].EntityMetadata.Human(health=1), # TODO
 		)
 
-@TestServer.handler(S.Player)
+@TNTRunServer.handler(S.Player)
 def handlePlayer(server, c, p):
 	c.player.pos.update(
 		on_ground = p.on_ground,
 	)
 
-@TestServer.handler(S.PlayerPosition)
+@TNTRunServer.handler(S.PlayerPosition)
 def handlePlayerPosition(server, c, p):
 	x, y, z = c.player.pos.pos[:3]
 	c.player.pos.update(
@@ -247,7 +190,7 @@ def handlePlayerPosition(server, c, p):
 				pitch = 256*c.player.pos.pitch/360,
 			)
 
-@TestServer.handler(S.PlayerLook)
+@TNTRunServer.handler(S.PlayerLook)
 def handlePlayerLook(server, c, p):
 	c.player.pos.update(
 		yaw = p.yaw,
@@ -266,7 +209,7 @@ def handlePlayerLook(server, c, p):
 			head_yaw = 256*(c.player.pos.yaw % 360)/360,
 		)
 
-@TestServer.handler(S.PlayerPositionAndLook)
+@TNTRunServer.handler(S.PlayerPositionAndLook)
 def handlePlayerPositionAndLook(server, c, p):
 	x, y, z = c.player.pos.pos[:3]
 	c.player.pos.update(
@@ -313,97 +256,32 @@ def handlePlayerPositionAndLook(server, c, p):
 			head_yaw = 256*(c.player.pos.yaw % 360)/360,
 		)
 
-@TestServer.handler(S.PlayerDigging)
-def handlePlayerDigging(server, c, p):
-	statuses = S.PlayerDigging[c.pv].status
-	if (p.status == statuses.DIGGING_FINISH or (p.status == statuses.DIGGING_START and c.player.gamemode == 1)):
-		server.world[c.player.dimension][p.x, p.y, p.z].set(0)
-	elif (p.status == statuses.DROP_ITEM):
-		slot = c.player.selected_slot
-		c.player.inventory[slot].set(-1)
-		C.SetSlot.send(c,
-			window_id = 0,
-			slot = slot,
-			slot_data = c.player.inventory[slot],
-		)
-	else: dlog(p.status)
-
-@TestServer.handler(S.PlayerBlockPlacement)
-def handlePlayerBlockPlacement(server, c, p):
-	x, y, z, id, data = p.x, p.y, p.z, p.held_item.id, p.held_item.nbt.get('data', 0) # TODO FIXME data key
-	if (id == -1): return
-	if (id in range(2256, 2267)): server.playing_track = id; return
-	if (not (x == -1 and y == 255 and z == -1)):
-		faces = S.PlayerBlockPlacement[c.pv].face
-		if (p.face == faces.X_POS): x += 1
-		elif (p.face == faces.X_NEG): x -= 1
-		elif (p.face == faces.Y_POS): y += 1
-		elif (p.face == faces.Y_NEG): y -= 1
-		elif (p.face == faces.Z_POS): z += 1
-		elif (p.face == faces.Z_NEG): z -= 1
-		if (y in range(256)): server.world[c.player.dimension][x, y, z].set(id, data)
-
-@TestServer.handler(S.HeldItemChange)
-def handleHeldItemChange(server, c, p):
-	c.player.selected_slot = 36+p.slot
-
-@TestServer.handler(S.ChatMessage)
+@TNTRunServer.handler(S.ChatMessage)
 def handleChatMessage(server, c, p):
-	if (p.message[0] == '/'):
-		cmd = p.message.split(' ')
-		if (cmd[0] == '/tp'):
-			if (not validate(cmd, {1: float, 2: float, 3: float})):
-				C.ChatMessage.send(c,
-					message = {'translate': 'commands.generic.usage', 'with': ['/tp <x> <y> <z>']},
-				)
-				return
-			x, y, z = map(float, cmd[1:])
-			c.player.pos.update(
-				x = x,
-				y = y,
-				z = z,
-			)
-			C.PlayerPositionAndLook.send(c,
-				x = c.player.pos.x,
-				y = c.player.pos.head_y+1e-8,
-				z = c.player.pos.z,
-				yaw = c.player.pos.yaw,
-				pitch = c.player.pos.pitch,
-				on_ground = c.player.pos.on_ground,
-			)
-		else:
-			C.ChatMessage.send(c,
-				message = {'translate': 'commands.generic.notFound', 'with': [cmd[0]]},
-			)
-	else:
-		log(c.player.name.join('<>'), p.message)
-		m = {'translate': 'chat.type.text', 'with': [c.player.name, p.message]}
-		for i in server.playing:
-			C.ChatMessage.send(i,
-				message = m,
-			)
+	log(c.player.name.join('<>'), p.message)
+	m = {'translate': 'chat.type.text', 'with': [c.player.name, p.message]}
+	for i in server.playing:
+		C.ChatMessage.send(i,
+			message = m,
+		)
 
 @apmain
 @aparg('-p', '--port', metavar='port', type=int, default=25565)
 def main(cargs):
-	setlogfile('PyCraft_testserver.log')
+	setlogfile('PyCraft_tntrun.log')
 
-	class config(TestServerConfig):
+	class config(TNTRunConfig):
 		server_port = cargs.port
 
-	try: world = World.open('PyCraft_testserver.pymap')
-	except FileNotFoundError:
-		world = World()
-		world[0][0:16, 0, 0:16] = 1
-	world[0][3, 1, 4] = 1
-	world[0][1024, 1, 1024] = 2
+	world = World()
+	world[0][0:16, 0, 0:16] = 46  # TNT
 
-	server = TestServer(world, config=config)
+	server = TNTRunServer(world, config=config)
 	server.start()
 	while (True):
 		try: server.handle()
 		#except Exception as ex: exception(ex)
-		except KeyboardInterrupt: sys.stderr.write('\r'); server.stop(); world.save('PyCraft_testserver.pymap'); exit()
+		except KeyboardInterrupt: sys.stderr.write('\r'); server.stop(); exit()
 
 if (__name__ == '__main__'): exit(main())
 else: logimported()

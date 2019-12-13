@@ -14,7 +14,7 @@ class ClientConfig:
 	main_hand = 1
 	brand = 'pycraft'
 	connect_timeout = 10
-	read_timeout = 0.001
+	read_timeout = 0.05
 	keepalive_timeout = 20
 
 class MCClient(PacketBuffer):
@@ -83,7 +83,8 @@ class MCClient(PacketBuffer):
 	def block(self, pid=-1, state=-1):
 		if (not isinstance(pid, int)): pid = pid[self.pv].pid
 		lpid = -1
-		while (lpid == -1 or (state != -1 and self.state != state) or (pid != -1 and lpid != pid)): lpid, p = self.handle()
+		while (lpid == -1 or (state != -1 and self.state != state) or (pid != -1 and lpid != pid)):
+			lpid, p = self.handle()
 		return p
 
 	def sendHandshake(self, state):
@@ -164,7 +165,7 @@ def handleDisconnect(s, p):
 
 @MCClient.handler(C.ChatMessage)
 def handleChatMessage(s, p):
-	if (not s.nolog): log(p.message)
+	if (not s.nolog): log(formatChat(p.message, ansi=True))
 
 @apmain
 @aparg('ip', metavar='<ip>')

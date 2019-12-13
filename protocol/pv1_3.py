@@ -10,6 +10,17 @@ MCV = ('13w42a', '1.7.1')
 """ Play"""
 
 
+# Serverbound
+
+S.ClientStatus = Packet(PLAY, 0x16,
+	action_id = Enum[Byte] (
+		RESPAWN			= 0,
+		STATS_REQUEST			= 1,
+		OPEN_INVENTORY_ACHIEVEMENT	= 2,
+	),
+)
+
+
 # Clientbound
 
 C.JoinGame = Packet(PLAY, 0x01,
@@ -70,7 +81,7 @@ C.Respawn = Packet(PLAY, 0x07,
 C.SoundEffect = Packet(PLAY, 0x29,
 	name = String,
 	x = Int,
-	y = Byte,
+	y = Int,
 	z = Int,
 	volume = Float,
 	pitch = UByte,

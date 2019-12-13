@@ -13,6 +13,7 @@ class ServerConfig:
 	connect_timeout = 0.001
 	keepalive_interval = 5
 	keepalive_timeout = 30
+	packet_timeout = 5
 	tickspeed = 1/20
 	reduced_debug_info = False
 	server_ip = ''
@@ -24,6 +25,7 @@ class Client(PacketBuffer):
 	def __init__(self, server, socket, address, *, nolog=False):
 		self.server, self.socket, self.address, self.nolog = server, socket, address, nolog
 		super().__init__()
+		self.socket.setblocking(False)
 		self.player = None
 		self.ping = 0
 		self.pv = 0
@@ -31,6 +33,7 @@ class Client(PacketBuffer):
 		self.nextkeepalive = 0
 		self.lastkeepalive = inf
 		self.lastkeepalive_id = 0
+		self.lastpacket = time.time()
 		self.state = HANDSHAKING
 
 	def disconnect(self):
@@ -81,6 +84,7 @@ class MCServer:
 
 	def handle(self):
 		if (time.time() >= self.lasttick+self.config.tickspeed):
+			self.ticks += 1
 			self.tick()
 			self.lasttick = time.time()
 
@@ -103,6 +107,7 @@ class MCServer:
 						keepalive_id = c.lastkeepalive_id
 					)
 					c.nextkeepalive = time.time()+self.config.keepalive_interval
+			elif (time.time() > c.lastpacket+self.config.packet_timeout): c.setstate(DISCONNECTED); continue
 			self.handle_client_packet(c, nolog=self.nolog)
 		self.clients.discard()
 
@@ -111,6 +116,7 @@ class MCServer:
 		try: l, pid = c.readPacketHeader(**kwargs)
 		except NoServer: c.setstate(DISCONNECTED); return
 		except NoPacket: return
+		c.lastpacket = time.time()
 		try:
 			p = self.handlers[c, pid]
 			h = self.handlers[p]
@@ -127,7 +133,6 @@ class MCServer:
 			c.setstate(DISCONNECTED)
 
 	def tick(self):
-		self.ticks += 1
 		log("\033[K\033[2m%.4f ticks/sec." % ((time.time()-self.startedAt)/self.ticks), end='\033[0m\r', raw=True, nolog=True)
 
 	@classmethod
@@ -224,7 +229,6 @@ def handleLoginStart(server, c, p):
 		yaw = c.player.pos.yaw,
 		pitch = c.player.pos.pitch,
 		on_ground = c.player.pos.on_ground,
-		flags = 0,
 	)
 
 @MCServer.handler(S.KeepAlive)

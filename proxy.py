@@ -6,9 +6,9 @@ from pycraft.server import *
 from pycraft.client import *
 logstart('PacketProxy')
 
-class PacketProxyClientConfig(ClientConfig):
-	connect_timeout = 1
-	read_timeout = 0.01
+class PacketProxyConfig(ServerConfig):
+	players_max = 1
+	motd = "§d§lPyCraft§f Debug proxy"
 
 class PacketProxy(MCServer):
 	__slots__ = ('ip', 'port', 's')
@@ -24,6 +24,7 @@ class PacketProxy(MCServer):
 
 	def handle(self):
 		if (self.c is None):
+			if (self.s is not None): self.s.disconnect(); self.s = None
 			try: self.c = Client(self, *self.socket.accept(), nolog=True)
 			except OSError: return
 
@@ -34,15 +35,16 @@ class PacketProxy(MCServer):
 			self.c = None
 			return
 
+		if (self.c.state != PLAY):
+			if (time.time() > self.c.lastpacket+self.config.packet_timeout): self.c.setstate(DISCONNECTED); return
+
 		if (self.c.state <= STATUS): super().handle_client_packet(self.c, nolog=True); return
 
 		if (self.s is None):
 			assert (self.c.state == LOGIN)
-			self.s = Builder(PacketProxyClient, config=PacketProxyClientConfig, pv=self.c.pv, nolog=True).connect((self.ip, self.port)).sendHandshake(LOGIN).build()
+			self.s = Builder(MCClient, pv=self.c.pv, nolog=True).connect((self.ip, self.port)).sendHandshake(LOGIN).build()
 			assert (self.c.pv == self.s.pv)
 			assert (self.c.state == self.s.state)
-			self.s.socket.settimeout(0.01)
-			self.c.socket.settimeout(0.01)
 
 		c, s = self.c, self.s
 
@@ -64,6 +66,7 @@ class PacketProxy(MCServer):
 			try: l, pid = c.readPacketHeader(nolog=True)
 			except NoPacket: pass
 			else:
+				c.lastpacket = time.time()
 				for i, p in PVs[c.pv].S.__dict__.items():
 					if (p.state == c.state and p.pid == pid):
 						try: d = p.recv(c)
@@ -78,18 +81,16 @@ class PacketProxy(MCServer):
 	@staticmethod
 	def dumpPacket(side, name, p, d):
 		print(f"\033[1m{side.side}.{name}\033[0m (state={p.state}, pid={hex(p.pid)}):")
-		if (isinstance(d, dict)): print(_S('\n').join(f"\033[93m{k}\033[0m = {v}" for k, v in d.items()).indent())
+		if (isinstance(d, dict)): print(_S('\n').join(f"\033[93m{k}\033[0m = {repr(v)}{f': {str(v)}' if (str(v) != repr(v)) else ''}" for k, v in d.items()).indent())
 		elif (isinstance(d, bytes)): print(d)
 		print()
-
-class PacketProxyClient(MCClient):
-	handlers = Handlers()
 
 ### XXX ###
 
 @PacketProxy.handler(S.Handshake)
 def handleHandshake(server, c, p):
 	a = c.socket.getpeername()
+	if (p.state == LOGIN): clear()
 	log(f"New handshake from {a[0]}:{a[1]}@pv{p.pv}: state {p.state}")
 	c.pv = p.pv
 	c.setstate(p.state)
@@ -140,10 +141,8 @@ def handlePing(server, c, p):
 def main(cargs):
 	setlogfile('PyCraft_proxy.log')
 
-	class config(ServerConfig):
+	class config(PacketProxyConfig):
 		server_port = cargs.listenport
-		players_max = 1
-		motd = "§d§lPyCraft§f Debug proxy"
 
 	server = PacketProxy(cargs.ip, cargs.port, config=config, nolog=True)
 	server.start()

@@ -16,7 +16,6 @@ class LobbyConfig(ServerConfig):
 
 class LobbyClientConfig(ClientConfig):
 	connect_timeout = 1
-	read_timeout = 0.01
 
 class MCLobby(MCServer):
 	handlers = Handlers(MCServer.handlers)

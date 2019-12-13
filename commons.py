@@ -18,22 +18,12 @@ from .protocol.pv0 import VarInt
 readVarInt, writeVarInt = VarInt.read, VarInt.pack
 
 class _socket(socket.socket):
+	def recv(self, *_, **__):
+		raise WTFException()
+
 	def read(self, n, flags=0):
 		flags |= socket.MSG_WAITALL
-		if (self.gettimeout() is None): return self.recv(n, flags)
-
-		r = bytearray()
-		t = time.time()
-		to = self.gettimeout()
-		while (n > 0):
-			if (time.time()-t > to): raise socket.timeout()
-			try: c = self.recv(n, flags)
-			except OSError as ex:
-				if (not isinstance(ex, socket.timeout) and ex.errno != socket.EWOULDBLOCK): raise
-				continue
-			n -= len(c)
-			r += c
-		return bytes(r)
+		return super().recv(n, flags)
 
 	def peek(self, n=1, flags=0):
 		flags |= socket.MSG_PEEK
@@ -76,7 +66,7 @@ class PacketBuffer:
 
 	__slots__ = ('socket', 'compression', 'packet')
 
-	nolog = False
+	nolog = bool()
 
 	def __init__(self):
 		self.compression = -1
@@ -174,13 +164,18 @@ class Position(Updatable):
 	yaw: float
 	pitch: float
 	on_ground: bool
+	height: 1.62
 
 	def __repr__(self):
 		return repr((self.x, self.y, self.z))
 
 	@property
 	def head_y(self):
-		return self.y+1.62+1e-8
+		return self.y+self.height
+
+	@head_y.setter
+	def head_y(self, head_y):
+		self.y = head_y-self.height
 
 	@property
 	def pos(self):
@@ -190,6 +185,14 @@ class Position(Updatable):
 	def pos(self, pos):
 		self.x, self.y, self.z = pos[:3]
 		if (pos[3:]): self.yaw, self.pitch = pos[3:]
+
+	@property
+	def look(self):
+		return (self.yaw, self.pitch)
+
+	@look.setter
+	def look(self, look):
+		self.yaw, self.pitch = look
 
 	def updatepos(self, x, y, z, yaw, pitch, on_ground=None, flags=0b00000):
 		self.pos = tuple(self.pos[ii]+i if (flags & (1 << ii)) else i for ii, i in enumerate((x, y, z, yaw, pitch)))
@@ -229,6 +232,7 @@ class Player(Entity):
 	uuid: None
 	name: str
 	gamemode: int
+	health: 20.0
 	inventory: [Slot() for _ in range(45)]
 	selected_slot: int
 
@@ -265,7 +269,7 @@ def formatChat(chat, ansi=False):
 			'death.attack.player': "{} was slain by ",
 			'multiplayer.player.joined': "{} joined the game",
 			'multiplayer.player.left': "{} left the game",
-		}.get(chat['translate'], chat['translate']))
+		}.get(chat['translate'], chat['translate']+': '))
 	r = str()
 	if (ansi):
 		s = [str(v) for k, v in dict(

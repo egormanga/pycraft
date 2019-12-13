@@ -18,7 +18,13 @@ C.MultiBlockChange = Packet(PLAY, 0x22,
 	chunk_z = Int,
 	count = Short,
 	size = Int,
-	data = Array[UInt, 'count'],
+	data = Array[Mask[UInt] (
+		BLOCK_DATA	= 0x0000000F,
+		BLOCK_ID	= 0x0000FFF0,
+		BLOCK_Y	= 0x00FF0000,
+		BLOCK_Z	= 0x0F000000,
+		BLOCK_X	= 0xF0000000,
+	), 'count'],
 )
 
 C.SetSlot = Packet(PLAY, 0x2F,

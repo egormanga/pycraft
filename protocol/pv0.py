@@ -220,6 +220,9 @@ class Optional:
 	def __init__(self, type, flag_name, flag_values=None):
 		self.type, self.flag_name, self.flag_values = type, flag_name, flag_values
 
+	def __getattr__(self, x):
+		return getattr(self.__getattribute__('type'), x)
+
 	def read(self, c, *, ctx=None):
 		f = ctx[self.flag_name]
 		if (self.flag_values(f) if (callable(self.flag_values)) else f in self.flag_values if (self.flag_values is not None) else f): return self.type.read(c, ctx=ctx)
@@ -235,6 +238,9 @@ class Array:
 
 	def __init__(self, type, count):
 		self.type, self.count = type, count
+
+	def __getattr__(self, x):
+		return getattr(self.__getattribute__('type'), x)
 
 	def read(self, c, *, ctx=None):
 		n = ctx[self.count] if (isinstance(self.count, str)) else self.count
@@ -434,6 +440,13 @@ class EntityMetadata:
 	class _EntityMetadataBase(metaclass=_MetadataMeta):
 		def __init__(self, **kwargs):
 			self._data = {i: kwargs[i] % 256 if (self[i] == UByte) else kwargs[i] for i in self._names.values() if i in kwargs}
+
+		@classmethod
+		def __repr__(cls):
+			return f"<EntityMetadata of {cls.__name__}>"
+
+		def __str__(self):
+			return str(self._data)
 
 		def __getattribute__(self, x):
 			if (x[0] == '_'): return super().__getattribute__(x)
@@ -771,7 +784,10 @@ S.ChatMessage = Packet(PLAY, 0x01,
 
 S.UseEntity = Packet(PLAY, 0x02,
 	target = Int,
-	mouse = Byte,
+	mouse = Enum[Byte] (
+		RIGHT	= 0,
+		LEFT	= 1,
+	),
 )
 
 S.Player = Packet(PLAY, 0x03,
@@ -1289,7 +1305,13 @@ C.MultiBlockChange = Packet(PLAY, 0x22,
 	chunk_z = VarInt,
 	count = Short,
 	size = Int,
-	data = Array[UInt, 'count'],
+	data = Array[Mask[UInt] (
+		BLOCK_DATA	= 0x0000000F,
+		BLOCK_ID	= 0x0000FFF0,
+		BLOCK_Y	= 0x00FF0000,
+		BLOCK_Z	= 0x0F000000,
+		BLOCK_X	= 0xF0000000,
+	), 'count'],
 )
 
 C.BlockChange = Packet(PLAY, 0x23,
