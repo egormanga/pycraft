@@ -87,4 +87,4 @@ C.SoundEffect = Packet(PLAY, 0x29,
 	pitch = UByte,
 )
 
-# by Sdore, 2019
+# by Sdore, 2020

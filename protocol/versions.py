@@ -44,4 +44,4 @@ for i in map(lambda x: x.rsplit('/', maxsplit=1)[1].rsplit('.', maxsplit=1)[0], 
 C = VersionProxy('C')
 S = VersionProxy('S')
 
-# by Sdore, 2019
+# by Sdore, 2020

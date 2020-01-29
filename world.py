@@ -275,4 +275,4 @@ class World(Updatable):
 			for dimension, map in self.maps.items() if map}, file)
 		else: raise NotImplementedError(format)
 
-# by Sdore, 2019
+# by Sdore, 2020

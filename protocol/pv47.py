@@ -722,4 +722,4 @@ C.UpdateEntityNBT = Packet(PLAY, 0x49,
 	tag = NBT,
 )
 
-# by Sdore, 2019
+# by Sdore, 2020

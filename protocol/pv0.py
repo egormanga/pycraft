@@ -1630,4 +1630,4 @@ C.Disconnect = Packet(PLAY, 0x40,
 
 # TODO: replace all assertions with exceptions
 
-# by Sdore, 2019
+# by Sdore, 2020

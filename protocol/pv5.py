@@ -31,4 +31,4 @@ C.SpawnPlayer = Packet(PLAY, 0x0C,
 	metadata = EntityMetadata,
 )
 
-# by Sdore, 2019
+# by Sdore, 2020

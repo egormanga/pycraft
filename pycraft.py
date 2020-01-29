@@ -9,4 +9,4 @@ logstart('Pycraft')
 if (__name__ == '__main__'): logstarted(); exit()
 else: logimported()
 
-# by Sdore, 2019
+# by Sdore, 2020

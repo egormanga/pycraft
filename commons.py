@@ -454,4 +454,4 @@ class DebugClient(PacketBuffer):
 		self.socket = DebugSocket()
 		PacketBuffer.__init__(self, self.socket)
 
-# by Sdore, 2019
+# by Sdore, 2020

@@ -33,4 +33,4 @@ C.SetSlot = Packet(PLAY, 0x2F,
 	slot_data = Slot,
 )
 
-# by Sdore, 2019
+# by Sdore, 2020
