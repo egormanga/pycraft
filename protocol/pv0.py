@@ -3,10 +3,7 @@
 # https://wiki.vg/Protocol?oldid=5007
 
 from .. import commons
-from ..commons import State, DISCONNECTED, HANDSHAKING, STATUS, LOGIN, PLAY
-import io, re, copy, gzip, json, uuid, zlib, ctypes, string, struct, inspect
-from nbt import *
-from utils import hex, dlog, dplog, dispatch, parseargs, singleton, cachedclass, allsubclasses, classproperty, staticitemget, isiterablenostr, Sdict, Slist, TEST, AttrView, WTFException
+from ..commons import *
 
 PVs = {0}
 MCV = ('13w41b',)*2
@@ -167,7 +164,7 @@ class NBT:
 class Angle(Byte): pass
 
 class UUID:
-	_default = commons.UUID(int=0)
+	_default = uuid.UUID(int=0)
 
 	@staticmethod
 	def read(c, *, ctx=None):
