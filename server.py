@@ -22,6 +22,14 @@ class ServerConfig:
 	motd = "A PyCraft Server"
 
 class Client(PacketBuffer):
+	class _remote:
+		def __init__(self):
+			self.loaded_chunk_quads = set()
+
+		def __getattr__(self, x):
+			if (x not in self.__dict__): setattr(self, x, None)
+			return getattr(self, x)
+
 	def __init__(self, server, socket, address, *, nolog=False):
 		self.server, self.socket, self.address, self.nolog = server, socket, address, nolog
 		super().__init__()
@@ -35,6 +43,7 @@ class Client(PacketBuffer):
 		self.lastkeepalive_id = 0
 		self.lastpacket = time.time()
 		self.state = HANDSHAKING
+		self.remote = self._remote()
 
 	def disconnect(self):
 		try: self.socket.shutdown(socket.SHUT_WR)
@@ -49,12 +58,20 @@ class Client(PacketBuffer):
 		self.nextkeepalive = time.time()+self.server.config.keepalive_interval
 
 class MCServer:
-	def __init__(self, *, config=ServerConfig, nolog=False):
-		self.config, self.nolog = config(), nolog
+	handlers = Handlers()
+	commands = Commands()
+	events = Events()
+
+	def __init__(self, *, config=ServerConfig, debug=False, nolog=False):
+		self.config, self.debug, self.nolog = config(), debug, nolog
 		self.clients = Slist()
 		self.handlers = Handlers(self.handlers)
 		self.handler = lambda x: self.handlers.handler(x)
+		self.commands = Commands(self.commands, self)
+		self.command = lambda x: self.commands.command(x)
+		self.events = Events(self.events, self)
 		self.entities = Entities()
+		self.playerdata = PlayerData(self)
 		self.env = attrdict.AttrDict(
 			difficulty=self.config.difficulty,
 		)
@@ -73,6 +90,11 @@ class MCServer:
 	@property
 	def playing(self):
 		return [i for i in self.clients if i.state == PLAY]
+
+	def create_player(self, **kwargs):
+		player = Player(**kwargs)
+		player.gamemode = self.config.default_gamemode
+		return player
 
 	def start(self):
 		self.socket.listen()
@@ -97,7 +119,7 @@ class MCServer:
 			if (c.state == DISCONNECTED):
 				c.disconnect()
 				self.clients.to_discard(ii)
-				log(f"Disconnected: {c.address}")
+				if (self.debug): log(f"Disconnected: {c.address}")
 				continue
 			if (c.state == PLAY):
 				if (time.time() > c.lastkeepalive+self.config.keepalive_timeout): c.setstate(DISCONNECTED); continue
@@ -111,7 +133,6 @@ class MCServer:
 			self.handle_client_packet(c, nolog=self.nolog)
 		self.clients.discard()
 
-	handlers = Handlers()
 	def handle_client_packet(self, c, **kwargs):
 		try: l, pid = c.readPacketHeader(**kwargs)
 		except NoServer: c.setstate(DISCONNECTED); return
@@ -121,9 +142,10 @@ class MCServer:
 			p = self.handlers[c, pid]
 			h = self.handlers[p]
 		except KeyError:
-			log(1, f"Unhandled packet at state {c.state}: length={l} pid={hex(pid)}", nolog=True)
-			log(2, c.packet.read(l), raw=True, nolog=True)
-			log(4, '-'*80+'\n', raw=True, nolog=True)
+			if (self.debug):
+				log(1, f"Unhandled packet at state {c.state}: length={l} pid={hex(pid)}", nolog=True)
+				log(2, c.packet.read(l), raw=True, nolog=True)
+				log(4, '-'*80+'\n', raw=True, nolog=True)
 			return
 		try: h(self, c, p.recv(c))
 		except Disconnect as ex:
@@ -136,8 +158,12 @@ class MCServer:
 		log("\033[K\033[2m%.4f ticks/sec." % ((time.time()-self.startedAt)/self.ticks), end='\033[0m\r', raw=True, nolog=True)
 
 	@classmethod
-	def handler(cls, packet):
-		return cls.handlers.handler(packet)
+	def handler(cls, *args, **kwargs):
+		return cls.handlers.handler(*args, **kwargs)
+
+	@classmethod
+	def command(cls, *args, **kwargs):
+		return cls.commands.command(*args, **kwargs)
 class Disconnect(Exception):
 	def __init__(self, *reason, **kwargs):
 		parseargs(kwargs, text='', extra=reason)
@@ -148,16 +174,17 @@ class Disconnect(Exception):
 @MCServer.handler(S.Handshake)
 def handleHandshake(server, c, p):
 	a = c.socket.getpeername()
-	log(f"New handshake from {a[0]}:{a[1]}@pv{p.pv}: state {p.state}")
+	if (server.debug): log(f"New handshake from {a[0]}:{a[1]}@pv{p.pv}: state {p.state}")
 
 	c.pv = p.pv
 	if (p.state == STATUS):
-		log(1, "Status")
+		if (server.debug): log(1, "Status")
 		c.setstate(STATUS)
 	elif (p.state == LOGIN):
-		log(1, "Login")
+		if (server.debug): log(1, "Login")
 		c.setstate(LOGIN)
-	else: log(f"Wrong state: {p.state}")
+	else:
+		if (server.debug): log(f"Wrong state: {p.state} ({c})")
 
 @MCServer.handler(S.StatusRequest)
 def handleStatusRequest(server, c, p):
@@ -203,11 +230,14 @@ def handleLoginStart(server, c, p):
 
 	try: profile = MojangAPI.profile(p.name)[0]
 	except Exception: profile = {'name': p.name, 'id': uuid3(NAMESPACE_OID, "OfflinePlayer:"+p.name)}
-	c.player = server.entities.add_player(Player(
+
+	player = server.playerdata.get_player(
 		name=profile['name'],
 		uuid=profile['id'],
-		gamemode=server.config.default_gamemode,
-	))
+	)
+	if (player in server.players): raise Disconnect(f"You are logged in from another location")
+
+	c.player = player
 	C.LoginSuccess.send(c,
 		uuid = c.player.uuid,
 		username = c.player.name,

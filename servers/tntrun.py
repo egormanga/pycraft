@@ -21,9 +21,11 @@ class TNTRunServer(MCServer):
 	def tick(self):
 		super().tick()
 
-		for p in self.players:
-			if (p.pos.x < 1 and p.pos.z < 1): continue
-			if (p.pos.y == 1): self.world[p.dimension][p.pos.x, p.pos.y-1, p.pos.z] = 0
+		if (self.ticks % 2):
+			for p in self.players:
+				if (p.pos.x < 1 and p.pos.z < 1): continue
+				if (p.pos.on_ground): self.world[p.dimension][math.floor(p.pos.x-.3):math.ceil(p.pos.x+.3), p.pos.y-1, math.floor(p.pos.z-.3):math.ceil(p.pos.z+.3)] = 0
+				self.world[p.dimension][0, 0, 0] = 1
 
 	def onchunksectioncreate(self, cs):
 		x, z = cs.x//16, cs.z//16
@@ -57,7 +59,8 @@ class TNTRunServer(MCServer):
 				data = cd,
 			)
 
-	def onblockupdate(self, block):
+	def onblockupdate(self, block, old):
+		if ((block.id, block.data) == old): return
 		for c in self.playing:
 			C.BlockChange.send(c,
 				x = block.x,

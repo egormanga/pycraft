@@ -11,14 +11,14 @@ class PacketProxyConfig(ServerConfig):
 	motd = "§d§lPyCraft§f Debug proxy"
 
 class PacketProxy(MCServer):
-	__slots__ = ('ip', 'port', 's')
+	__slots__ = ('ip', 'port', 's', 'ps')
 
 	handlers = Handlers()
 
-	def __init__(self, ip, port, **kwargs):
+	def __init__(self, ip, port, *, ps=None, **kwargs):
 		parseargs(kwargs, nolog=True)
 		super().__init__(**kwargs)
-		self.ip, self.port = ip, port
+		self.ip, self.port, self.ps = ip, port, ps
 		self.c = None
 		self.s = None
 
@@ -48,34 +48,50 @@ class PacketProxy(MCServer):
 
 		c, s = self.c, self.s
 
-		try:
+		try: # TODO: remove duplicate code
 			try: l, pid = s.readPacketHeader(nolog=True)
 			except NoPacket: pass
 			else:
 				for i, p in PVs[s.pv].C.__dict__.items():
-					if (p.state == s.state and p.pid == pid):
-						try: d = p.recv(s)
-						except NoPacket: d = None
-						except Exception: d = s.packet.buffer; raise
-						else: p.send(c, **d, nolog=True)
-						finally: self.dumpPacket(C, i, p, d)
-						if (p == C.LoginSuccess[c.pv]): c.setstate(PLAY); s.setstate(PLAY)
-						break
-				else: raise WTFException(pid)#s.sendPacket(pid, c.packet.read(l), nolog=True)
+					if (not (p.state == s.state and p.pid == pid)): continue
+					try: d = p.recv(s)
+					except NoPacket: d = None
+					except Exception as ex:
+						d = s.packet.buffer
+						log(1, f"\033[1m[\033[91mReading error\033[0;1m: {ex}]", raw=True)
+					else:
+						try: p.send(c, **d, nolog=True)
+						except Exception as ex: log(1, f"[Packing error: {ex}]", raw=True)
+					finally:
+						if (not self.ps or f"C.{i}" in self.ps): self.dumpPacket(C, i, p, d)
+					if (p == C.LoginSuccess[c.pv]): c.setstate(PLAY); s.setstate(PLAY)
+					break
+				else:
+					log(1, f"Dropped unknown packet: pid={pid}")
+					#raise WTFException(pid)
+					#s.sendPacket(pid, c.packet.read(l), nolog=True)
 
 			try: l, pid = c.readPacketHeader(nolog=True)
 			except NoPacket: pass
 			else:
 				c.lastpacket = time.time()
 				for i, p in PVs[c.pv].S.__dict__.items():
-					if (p.state == c.state and p.pid == pid):
-						try: d = p.recv(c)
-						except NoPacket: d = None
-						except Exception: d = c.packet.buffer; raise
-						else: p.send(s, **d, nolog=True)
-						finally: self.dumpPacket(S, i, p, d)
-						break
-				else: raise WTFException(pid)#s.sendPacket(pid, c.packet.read(l), nolog=True)
+					if (not (p.state == c.state and p.pid == pid)): continue
+					try: d = p.recv(c)
+					except NoPacket: d = None
+					except Exception as ex:
+						d = c.packet.buffer
+						log(1, f"\033[1m[\033[91mReading error\033[0;1m: {ex}]", raw=True)
+					else:
+						try: p.send(s, **d, nolog=True)
+						except Exception as ex: log(1, f"[Packing error: {ex}]", raw=True)
+					finally:
+						if (not self.ps or f"S.{i}" in self.ps): self.dumpPacket(S, i, p, d)
+					break
+				else:
+					log(1, f"Dropped unknown packet: pid={pid}")
+					#raise WTFException(pid)
+					#s.sendPacket(pid, c.packet.read(l), nolog=True)
 		except NoServer: c.disconnect(); s.disconnect(); self.c = None; self.s = None
 
 	@staticmethod
@@ -137,6 +153,7 @@ def handlePing(server, c, p):
 @apmain
 @aparg('ip', metavar='<ip>')
 @aparg('port', nargs='?', type=int, default=25565)
+@aparg('-ps', metavar='packets')
 @aparg('-p', '--listenport', metavar='port', type=int, default=25567)
 def main(cargs):
 	setlogfile('PyCraft_proxy.log')
@@ -144,7 +161,7 @@ def main(cargs):
 	class config(PacketProxyConfig):
 		server_port = cargs.listenport
 
-	server = PacketProxy(cargs.ip, cargs.port, config=config, nolog=True)
+	server = PacketProxy(cargs.ip, cargs.port, config=config, ps=cargs.ps, nolog=True)
 	server.start()
 	while (True):
 		try: server.handle()

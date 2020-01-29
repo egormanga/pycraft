@@ -1,6 +1,7 @@
 #!/usr/bin/python3
 # PyCraft common classes and methods
 
+import PyT9
 from nbt import *
 from uuid import *
 from utils import *; from utils import S as _S
@@ -25,6 +26,10 @@ class _socket(socket.socket):
 		flags |= socket.MSG_WAITALL
 		return super().recv(n, flags)
 
+	def read_into(self, buffer, nbytes=0, flags=0):
+		flags |= socket.MSG_WAITALL
+		return super().recv_into(buffer, nbytes, flags)
+
 	def peek(self, n=1, flags=0):
 		flags |= socket.MSG_PEEK
 		return self.read(n, flags)
@@ -32,37 +37,35 @@ socket.socket = _socket
 
 class PacketBuffer:
 	class IncomingPacket(io.BytesIO):
-		__slots__ = ('compression', 'pid')
+		__slots__ = ('pid',)
 
 		def __init__(self, socket, compression):
-			self.compression = compression
-			l = readVarInt(socket)
+			try: l = readVarInt(socket)
+			except ValueError: l = None
 			if (not l): raise NoPacket()
-			if (self.compression >= 0):
+			if (compression >= 0):
 				pl = readVarInt(socket)
 				l -= len(writeVarInt(pl))
-				buffer = socket.read(l)
-				if (pl): buffer = zlib.decompress(buffer)
-			else: buffer = socket.read(l)
-			super().__init__(buffer)
-			self.pid = readVarInt(self)
+			else: pl = None
+			buffer = bytearray(l)
+			self.length = socket.read_into(buffer)
+			del buffer[self.length:]
+			super().__init__(zlib.decompress(buffer) if (pl) else buffer)
+			try: self.pid = readVarInt(self)
+			except ValueError as ex: raise NoPacket(f"Invalid pid") from ex
 
 		def read(self, l):
-			if (self.length < l): raise NoPacket('Not enough data')
+			if (self.length < l): raise NoPacket("Not enough data")
 			return super().read(l)
 
 		def peek(self, l=1):
-			if (self.length < l): raise NoPacket('Not enough data')
+			if (self.length < l): raise NoPacket("Not enough data")
 			p = self.tell()
 			return self.getbuffer()[p:p+l].tobytes()
 
 		@property
 		def buffer(self):
 			return self.getbuffer()[self.tell():].tobytes()
-
-		@property
-		def length(self):
-			return len(self.getbuffer())
 
 	__slots__ = ('socket', 'compression', 'packet')
 
@@ -139,6 +142,99 @@ class Handlers(dict): # TODO: rewrite as a mixin
 			return self[packet]
 		return decorator
 
+class Commands(metaclass=SlotsMeta):
+	commands: dict
+	trie: PyT9.Trie
+	help_commands: set
+	server: ...
+
+	@dispatch
+	def __init__(self, commands: dict, server=None):
+		self.commands, self.server = commands.copy(), server
+		self.trie.update(self.commands)
+
+	@dispatch
+	def __init__(self, commands: lambda x: isinstance(x, Commands), server=None):
+		self.__init__(commands.commands, server=server)
+		self.help_commands = commands.help_commands.copy()
+
+	@dispatch
+	def __init__(self, server=None):
+		self.server = server
+
+	def add(self, cmd, func, *, show=True):
+		self.commands[cmd] = func
+		if (show): self.help_commands.add(cmd)
+		self.trie.add(cmd)
+
+	def command(self, *cmd, show=True):
+		def decorator(f):
+			for i in cmd:
+				self.commands[i] = f
+			if (show): self.help_commands.update(cmd)
+			self.trie.update(cmd)
+		return decorator
+
+	def execute(self, s, c):
+		cmd, *args = s.split()
+		try: f = self.commands[cmd]
+		except KeyError as ex: raise CommandNotFound(*ex.args)
+		fsig = inspect.signature(f)
+		try:
+			if (tuple(fsig.parameters.values())[-1].kind is inspect._VAR_POSITIONAL): return f(self.server, c, *args)
+			else:
+				try: return cast_call(f, self.server, c, *args)
+				except CastError as ex: usage = None
+		except CommandUsage as ex: usage = ex.args[0] if (ex.args) else None
+		raise CommandUsage(usage or f"{cmd} {' '.join(k.join('[]' if (v.default is not inspect._empty) else '<>') for k, v in tuple(fsig.parameters.items())[2:])}")
+class CommandException(Exception): pass
+class CommandNotFound(CommandException): translate = 'commands.generic.notFound'
+class CommandUsage(CommandException): translate = 'commands.generic.usage'
+
+class Events(metaclass=SlotsMeta): # TODO
+	queue: queue.Queue
+	handlers: Sdict(set)
+	server: ...
+	c: None
+	cs: list
+
+	@dispatch
+	def __init__(self, handlers: dict, server=None):
+		self.handlers, self.server = handlers.copy(), server
+
+	@dispatch
+	def __init__(self, events: lambda x: isinstance(x, Events), server=None):
+		self.__init__(events.handlers, server=server)
+
+	@dispatch
+	def __init__(self, server=None):
+		self.server = server
+
+	def __call__(self, c):
+		self.cs.append(c)
+		return self
+
+	def __enter__(self):
+		pass
+
+	def __exit__(self, type, value, tb):
+		self.cs.pop()
+
+	def fire(self, event):
+		self.events.queue.put((event, self.c))
+
+	def handle(self):
+		try: event, c = self.queue.get(block=False)
+		except queue.Empty: return
+		for f in self.handlers[event]:
+			f(server, c)
+
+	def on(self, event):
+		def decorator(f):
+			self.handlers[event].add(f)
+			return f
+		return decorator
+
 class MojangAPI:
 	baseurl = "https://api.mojang.com"
 
@@ -169,6 +265,15 @@ class Position(Updatable):
 	def __repr__(self):
 		return repr((self.x, self.y, self.z))
 
+	def __eq__(self, x):
+		return isinstance(x, Position) and x.pos == self.pos and x.on_ground == self.on_ground
+
+	def __iadd__(self, velocity):
+		self.x += velocity.dx
+		self.y += velocity.dy
+		self.z += velocity.dz
+		return self
+
 	@property
 	def head_y(self):
 		return self.y+self.height
@@ -183,6 +288,7 @@ class Position(Updatable):
 
 	@pos.setter
 	def pos(self, pos):
+		if (isinstance(pos, Position)): pos = pos.pos
 		self.x, self.y, self.z = pos[:3]
 		if (pos[3:]): self.yaw, self.pitch = pos[3:]
 
@@ -197,6 +303,14 @@ class Position(Updatable):
 	def updatepos(self, x, y, z, yaw, pitch, on_ground=None, flags=0b00000):
 		self.pos = tuple(self.pos[ii]+i if (flags & (1 << ii)) else i for ii, i in enumerate((x, y, z, yaw, pitch)))
 		if (on_ground is not None): self.on_ground = on_ground
+
+class Velocity(Updatable):
+	dx: float
+	dy: float
+	dz: float
+
+	def __repr__(self):
+		return repr(tuple(Sint(i).pm() for i in (self.dx, self.dy, self.dz)))
 
 class Slot(Updatable):
 	id: -1
@@ -217,59 +331,81 @@ class Entity(Updatable):
 	eid: -1
 	pos: Position
 	dimension: int
+	velocity: Velocity
+	metadata: dict
 
 	def __repr__(self):
 		return f"<Entity #{self.eid} at {self.pos}>"
 
-	@property
-	def metadata(self): # TODO
-		return b'\xff'
-
 	def updatePos(self, *args, **kwargs):
-		return self.pos.updatepos(*args, **kwargs)
+		self.pos.updatepos(*args, **kwargs)
 
 class Player(Entity):
 	uuid: None
 	name: str
+	settings: dict
+	spawn_position: Position
 	gamemode: int
-	health: 20.0
+	health: 20
+	food: 20
+	food_saturation: 5
 	inventory: [Slot() for _ in range(45)]
 	selected_slot: int
 
 	def __repr__(self):
 		return f"<Player '{self.name}' at {self.pos}>"
 
-class Entities:
-	__slots__ = ('entities', 'players')
+	@property
+	def visible_chunk_quads(self):
+		cx, cz = int(self.pos.x)//32, int(self.pos.z)//32
+		r = self.settings.get('view_distance', 1)
+		return {(x, z) for x in range(cx-r, cx+r) for z in range(cz-r, cz+r)}
 
-	def __init__(self):
-		self.entities = list()
-		self.players = list()
+class Entities(metaclass=SlotsMeta): # TODO: remove this
+	last_eid: int
+	entities: Sdict
+
+	def __iter__(self):
+		self.entities.discard()
+		return iter(self.entities.items())
 
 	def add_entity(self, entity):
-		entity.eid = len(self.entities)
-		self.entities.append(entity)
+		if (entity not in self.entities.values()):
+			while (self.last_eid in self.entities): self.last_eid += 1 # TODO: mod k
+			entity.eid = self.last_eid
+			self.entities[entity.eid] = entity
 		return entity
 
-	def add_player(self, player):
-		player = self.add_entity(player)
-		self.players.append(player)
-		return player
+	def remove_entity(self, eid):
+		self.entities.to_discard(eid)
 
-def formatChat(chat, ansi=False):
+class PlayerData(metaclass=SlotsMeta):
+	players: dict
+	server: ...
+
+	def __init__(self, server):
+		self.server = server
+
+	def get_player(self, *, name, uuid):
+		try: player = self.players[uuid]
+		except KeyError: player = self.players[uuid] = self.server.create_player(name=name, uuid=uuid)
+		return self.server.entities.add_entity(player)
+
+def loadTranslation(version, lang):
+	hash = requests.get(requests.get(first(_S(requests.get("https://launchermeta.mojang.com/mc/game/version_manifest.json").json()['versions'])@{'id': (version,)})['url']).json()['assetIndex']['url']).json()['objects'][f"minecraft/lang/{lang}.lang"]['hash']
+	r = requests.get(f"http://resources.download.minecraft.net/{hash[:2]}/{hash}").text # TODO: caching
+	return {k: re.sub(r'%(\d*)\$?s', r'{\1}', v) for k, _, v in map(lambda x: x.partition('='), r.strip().split())}
+
+en_GB = loadTranslation('1.8.9', 'en_GB') # TODO
+
+def formatChat(chat, *, ansi=False):
 	if (isinstance(chat, str)): return chat
 	text = chat.get('text', '')
 	if ('translate' in chat):
 		f = tuple(formatChat(i, ansi=ansi) for i in chat.get('with', ()))
-		text += (lambda x: x.format(*f[:x.count('{}')])+str().join(f[x.count('{}'):]))({
-			'chat.type.announcement': "[{}] ",
-			'chat.type.text': "<{}> ",
-			'commands.message.display.incoming': "{} whispers: ",
-			'commands.message.display.outgoing': "Whispered to {}: ",
-			'death.attack.player': "{} was slain by ",
-			'multiplayer.player.joined': "{} joined the game",
-			'multiplayer.player.left': "{} left the game",
-		}.get(chat['translate'], chat['translate']+': '))
+		text += (lambda x: x.format(*f[:x.count('{}')])+str().join(f[x.count('{}'):]))(
+			en_GB.get(chat['translate'], chat['translate']+': ')
+		)
 	r = str()
 	if (ansi):
 		s = [str(v) for k, v in dict(

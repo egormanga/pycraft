@@ -13,7 +13,7 @@ MCV = ('13w42a', '1.7.1')
 # Serverbound
 
 S.ClientStatus = Packet(PLAY, 0x16,
-	action_id = Enum[Byte] (
+	action = Enum[Byte] (
 		RESPAWN			= 0,
 		STATS_REQUEST			= 1,
 		OPEN_INVENTORY_ACHIEVEMENT	= 2,

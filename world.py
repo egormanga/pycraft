@@ -21,13 +21,43 @@ class Block(Updatable):
 		return bool(self.id)
 
 	@dispatch
-	def set(self, id: int, data: int = 0):
+	def set(self, id: int, data: int = 0, *, bulk=False):
+		old = (self.id, self.data)
 		self.id, self.data = id, data
-		if (self.chunk is not None and
+		if (not bulk and
+		    self.chunk is not None and
 		    self.chunk.chunksec is not None and
 		    self.chunk.chunksec.map is not None and
 		    self.chunk.chunksec.map.world is not None and
-		    self.chunk.chunksec.map.world.onblockupdate is not None): self.chunk.chunksec.map.world.onblockupdate(self)
+		    self.chunk.chunksec.map.world.onblockupdate is not None): self.chunk.chunksec.map.world.onblockupdate(self, old)
+
+	@property
+	def pos(self):
+		return (self.x, self.y, self.z)
+
+	@property
+	def dimension(self):
+		return self.chunk.chunksec.map.dimension
+
+@staticitemget
+@cachedclass
+class _Air(Block):
+	x = -1
+	y = -1
+	z = -1
+	id = 0
+	data = 0
+	chunk = None
+	dimension: int
+
+	def __init__(self, dimension):
+		self.dimension = dimension
+
+	def __repr__(self):
+		return f"<Air block>"
+
+	def set(self, id, data=None):
+		pass
 
 class Chunk(Updatable):
 	x: int
@@ -47,6 +77,7 @@ class Chunk(Updatable):
 
 	def __getitem__(self, pos):
 		x, y, z = map(int, pos)
+		if (y not in range(256)): return _Air[self.chunksec.map.dimension]
 		try: return self.blocks[x, y, z]
 		except KeyError:
 			block = self.blocks[x, y, z] = Block(x+self.x, y+self.y, z+self.z, chunk=self)
@@ -56,17 +87,23 @@ class Chunk(Updatable):
 			    self.chunksec.map.world.onblockcreate is not None): self.chunksec.map.world.onblockcreate(block)
 			return block
 
-	def __setitem__(self, pos, v):
-		xs, ys, zs = (tuple(range(*i.indices(16))) if (isinstance(i, slice)) else (int(i),) for i in pos)
+	def __setitem__(self, pos, v, *, cbulk=False):
+		xs, ys, zs = (tuple(range(max(0, int(i.start or 0)), min(int(i.stop or 16), 16), int(i.step or 1))) if (isinstance(i, slice)) else (int(i),) for i in pos)
 		if (not isinstance(v, tuple)): v = (v,)
-		for y in ys:
-			for z in zs:
-				for x in xs:
-					self[x, y, z].set(*v)
+		blocks = [(x, y, z) for y in ys for z in zs for x in xs]
+		bulk = (len(blocks) > 1)
+		for i in blocks:
+			self[i].set(*v, bulk=cbulk or bulk)
+		if (not cbulk and bulk and
+		    self.chunksec is not None and
+		    self.chunksec.map is not None and
+		    self.chunksec.map.world is not None and
+		    self.chunksec.map.world.onchunkbulkupdate is not None): self.chunksec.map.world.onchunkbulkupdate(self, blocks)
+		return blocks
 
 	@property
 	def blockids_bytes(self):
-		return bytes(self.blocks[x, y, z].id if ((x, y, z) in self.blocks) else 0 for y in range(16) for z in range(16) for x in range(16))
+		return bytes(self.blocks[x, y, z].id & 0xff if ((x, y, z) in self.blocks) else 0 for y in range(16) for z in range(16) for x in range(16))
 
 	@property
 	def blockdata_bytes(self):
@@ -93,15 +130,22 @@ class ChunkSection(Updatable):
 
 	def __getitem__(self, pos):
 		x, y, z = map(int, pos)
+		if (y not in range(256)): return _Air[self.map.dimension]
 		cy = y//16
 		return self.getchunk(cy)[x, y-cy*16, z]
 
 	def __setitem__(self, pos, v):
 		xs, ys, zs = pos
 		if (not isinstance(v, tuple)): v = (v,)
-		for y in range(*ys.indices(256)) if (isinstance(ys, slice)) else (int(ys),):
-			cy = y//16
-			self.getchunk(cy)[xs, y-cy*16, zs] = v
+		chunks = {cy: slice(max(0, ys.start-cy*16), ys.stop-cy*16, ys.step) if (isinstance(ys, slice)) else ys for cy in {y//16 for y in (range(max(0, int(ys.start or 0)), min(int(ys.stop or 256), 256), int(ys.step or 1)) if (isinstance(ys, slice)) else (int(ys),))}}
+		cbulk = (len(chunks) > 1)
+		blocks = list()
+		for cy, y in chunks.items():
+			blocks += self.getchunk(cy).__setitem__((xs, y, zs), v, cbulk=cbulk)
+		if (cbulk and
+		    self.map is not None and
+		    self.map.world is not None and
+		    self.map.world.onchunksecbulkupdate is not None): self.map.world.onchunksecbulkupdate(self, chunks, blocks)
 
 	def getchunk(self, cy):
 		try: return self.chunks[cy]
@@ -158,22 +202,25 @@ class Map(Updatable):
 
 	def __getitem__(self, pos):
 		x, y, z = map(int, pos)
+		if (y not in range(256)): return _Air[self.dimension]
 		cx, cz = x//16, z//16
 		return self.getchunksec(cx, cz)[x-cx*16, y, z-cz*16]
 
 	def __setitem__(self, pos, v):
 		xs, ys, zs = pos
 		if (not isinstance(v, tuple)): v = (v,)
-		for z in range(zs.start, zs.stop, zs.step or 1) if (isinstance(zs, slice)) else (int(zs),):
-			cz = z//16
-			for x in range(xs.start, xs.stop, xs.step or 1) if (isinstance(xs, slice)) else (int(xs),):
-				cx = x//16
-				self.getchunksec(cx, cz)[x-cx*16, ys, z-cz*16] = v
+		for cz in {z//16 for z in (range(int(zs.start), int(zs.stop), int(zs.step or 0) or 1) if (isinstance(zs, slice)) else (int(zs),))}:
+			for cx in {x//16 for x in (range(int(xs.start), int(xs.stop), int(xs.step or 0) or 1) if (isinstance(xs, slice)) else (int(xs),))}:
+				x, z = slice(max(0, xs.start-cx*16), xs.stop-cx*16, xs.step) if (isinstance(xs, slice)) else xs, slice(max(0, zs.start-cz*16), zs.stop-cz*16, zs.step) if (isinstance(zs, slice)) else zs
+				self.getchunksec(cx, cz)[x, ys, z] = v
 
 	def getchunksec(self, cx, cz):
 		try: return self.chunksec[cx, cz]
 		except KeyError:
-			chunksec = self.chunksec[cx, cz] = ChunkSection(cx*16, cz*16, map=self)
+			chunksec = self.chunksec[cx, cz] = ChunkSection(cx*16, cz*16)
+			if (self.world is not None and
+			    self.world.create_chunk is not None): chunksec = self.world.create_chunk(chunksec) or chunksec
+			chunksec.map = self
 			if (self.world is not None and
 			    self.world.onchunksectioncreate is not None): self.world.onchunksectioncreate(chunksec)
 			return chunksec
@@ -184,9 +231,12 @@ class Map(Updatable):
 
 class World(Updatable):
 	maps: dict
+	create_chunk: None
 	ondimensioncreate: None
 	onchunksectioncreate: None
 	onchunkcreate: None
+	onchunkbulkupdate: None
+	onchunksecbulkupdate: None
 	onblockcreate: None
 	onblockupdate: None
 
@@ -221,8 +271,8 @@ class World(Updatable):
 			pickle.dump({
 				dimension: {
 					pos: (lambda abm, cd: (abm, zlib.compress(cd)))(*cs.chunkdata_bytes[-1])
-				for pos, cs in map.chunksec.items()}
-			for dimension, map in self.maps.items()}, file)
+				for pos, cs in map.chunksec.items() if cs}
+			for dimension, map in self.maps.items() if map}, file)
 		else: raise NotImplementedError(format)
 
 # by Sdore, 2019

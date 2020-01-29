@@ -5,3 +5,4 @@ A portable Minecraft protocol, client and server implementations written in Pyth
 
 ## Dependencies
 * `utils`: https://github.com/egormanga/utils
+* `PyT9`: https://github.com/egormanga/PyT9

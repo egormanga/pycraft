@@ -4,9 +4,9 @@
 
 from .. import commons
 from ..commons import State, DISCONNECTED, HANDSHAKING, STATUS, LOGIN, PLAY
-import io, re, copy, gzip, json, uuid, ctypes, string, struct, inspect
+import io, re, copy, gzip, json, uuid, zlib, ctypes, string, struct, inspect
 from nbt import *
-from utils import hex, dlog, dplog, dispatch, parseargs, singleton, cachedclass, allsubclasses, classproperty, staticitemget, Sdict, Slist, TEST, AttrView, WTFException
+from utils import hex, dlog, dplog, dispatch, parseargs, singleton, cachedclass, allsubclasses, classproperty, staticitemget, isiterablenostr, Sdict, Slist, TEST, AttrView, WTFException
 
 PVs = {0}
 MCV = ('13w41b',)*2
@@ -60,7 +60,7 @@ class String:
 
 	@dispatch
 	def read(self, c, *, ctx=None):
-		return self.read(c, ctx, self.length)
+		return self.read(c, ctx, length=self.length)
 
 	@staticmethod
 	@dispatch
@@ -164,29 +164,6 @@ class NBT:
 		t.write_file(buffer=r)
 		return r.getvalue()
 
-class Position:
-	_default = (0, 0, 0)
-
-	@staticmethod
-	def read(c, *, ctx=None):
-		v = ULong.read(c, ctx=ctx)
-		x = v >> 38
-		y = v & 0xFFF
-		z = v << 26 >> 38
-		if (x >= 1 << 25): x -= 1 << 26
-		if (y >= 1 << 11): y -= 1 << 12
-		if (z >= 1 << 25): z -= 1 << 26
-		return (x, y, z)
-
-	@staticmethod
-	def pack(v, *, ctx=None):
-		x, y, z = map(int, v)
-		return ULong.pack(
-			((x & 0x3FFFFFF) << 38) |
-			((y & 0xFFF) << 26) |
-			 (z & 0x3FFFFFF),
-		ctx)
-
 class Angle(Byte): pass
 
 class UUID:
@@ -204,7 +181,7 @@ class UUID:
 class Fixed:
 	_default = 0
 
-	def __init__(self, type, fracbits):
+	def __init__(self, type, fracbits=5):
 		self.type, self.fracbits = type, fracbits
 
 	def read(self, c, *, ctx=None):
@@ -225,32 +202,47 @@ class Optional:
 
 	def read(self, c, *, ctx=None):
 		f = ctx[self.flag_name]
-		if (self.flag_values(f) if (callable(self.flag_values)) else f in self.flag_values if (self.flag_values is not None) else f): return self.type.read(c, ctx=ctx)
+		if (self.flag_values(f) if (callable(self.flag_values)) else f in self.flag_values if (isiterablenostr(self.flag_values)) else f == self.flag_values if (self.flag_values is not None) else f): return self.type.read(c, ctx=ctx)
 
 	def pack(self, v, *, ctx=None):
 		f = ctx[self.flag_name]
-		if (self.flag_values(f) if (callable(self.flag_values)) else f in self.flag_values if (self.flag_values is not None) else f): return self.type.pack(v, ctx=ctx)
+		if (self.flag_values(f) if (callable(self.flag_values)) else f in self.flag_values if (isiterablenostr(self.flag_values)) else f == self.flag_values if (self.flag_values is not None) else f): return self.type.pack(v, ctx=ctx)
 		return b''
 
 @staticitemget
 class Array:
 	_default = ()
 
-	def __init__(self, type, count):
-		self.type, self.count = type, count
+	def __init__(self, type, count, count_func=None):
+		self.type, self.count, self.count_func = type, count, count_func
 
 	def __getattr__(self, x):
 		return getattr(self.__getattribute__('type'), x)
 
 	def read(self, c, *, ctx=None):
 		n = ctx[self.count] if (isinstance(self.count, str)) else self.count
+		if (self.count_func is not None): n = self.count_func(n)
 		r = self.type.readn(c, n, ctx=ctx) if (hasattr(self.type, 'readn')) else [self.type.read(c, ctx=ctx) for _ in range(n)]
 		return bytes(r) if (self.type == UByte) else bytes(i % 256 for i in r) if (self.type == Byte) else r
 
 	def pack(self, v, *, ctx=None):
-		n = ctx[self.count] if (isinstance(self.count, str)) else self.count
-		assert (len(v) == n)
+		try: n = ctx[self.count] if (isinstance(self.count, str)) else self.count
+		except KeyError: n = len(v)
+		else:
+			assert (len(v) == n)
+			if (self.count_func is not None): n = self.count_func(n)
 		return self.type.packn(n, *v, ctx=ctx) if (hasattr(self.type, 'packn')) else bytes().join(self.type.pack(i, ctx=ctx) for i in v)
+
+class Data:
+	_default = b''
+
+	@staticmethod
+	def read(c, *, ctx=None):
+		return c.read()
+
+	@staticmethod
+	def pack(self, v, *, ctx=None):
+		return bytes(v)
 
 @staticitemget
 class Enum:
@@ -277,38 +269,78 @@ class Flags(Enum.f): pass
 @staticitemget
 class Mask(Enum.f): pass # TODO 0xFF00(2) = 0x0200
 
-### Probably unneeded
-#@staticitemget
-#class GZipped:
-#	class _GzipReader(gzip._GzipReader):
-#		def __init__(self, *args, **kwargs):
-#			super().__init__(*args, **kwargs)
-#			self._finished = None
-#
-#		def _read_eof(self):
-#			self._finished = self._fp.file.tell()
-#
-#		def _read_gzip_header(self):
-#			if (self._finished): return False
-#			return super()._read_gzip_header()
-#
-#		def peek(self, l=1):
-#			r = self.read(l)
-#			self._fp.prepend(r)
-#			return r
-#
-#	def __init__(self, type):
-#		self.type = type
-#
-#	def read(self, c, *, ctx=None):
-#		r = self._GzipReader(c)
-#		try: return self.type.read(r, ctx=ctx)
-#		finally:
-#			if (r._finished is not None): c.seek(r._finished)
-#
-#	def pack(self, v, *, ctx=None):
-#		return gzip.compress(self.type.pack(v, ctx=ctx))
-###
+class PackLast: pass
+
+@staticitemget
+class Length(PackLast):
+	def __init__(self, type, field):
+		self.type, self.field = type, field
+
+	@property
+	def _default(self):
+		return self.type._default
+
+	def read(self, c, *, ctx=None):
+		r = self.type.read(c, ctx=ctx)
+		assert (r == len(ctx[self.field]))
+		return r
+
+	def pack(self, v, *, ctx=None):
+		return self.type.pack(v or len(ctx[self.field]), ctx=ctx)
+
+@staticitemget
+class Size(PackLast):
+	def __init__(self, type, field):
+		self.type, self.field = type, field
+
+	@property
+	def _default(self):
+		return self.type._default
+
+	def read(self, c, *, ctx=None):
+		return self.type.read(c, ctx=ctx)
+
+	def pack(self, v, *, ctx=None):
+		return self.type.pack(v or len(ctx[self.field+'_packed']), ctx=ctx)
+
+@staticitemget
+class Zlibbed(Array.f):
+	def read(self, c, *, ctx=None):
+		return zlib.decompress(super().read(c, ctx=ctx))
+
+	def pack(self, v, *, ctx=None):
+		return zlib.compress(super().pack(v, ctx=ctx))
+
+@staticitemget
+class GZipped:
+	class _GzipReader(gzip._GzipReader):
+		def __init__(self, *args, **kwargs):
+			super().__init__(*args, **kwargs)
+			self._finished = None
+
+		def _read_eof(self):
+			self._finished = self._fp.file.tell()
+
+		def _read_gzip_header(self):
+			if (self._finished): return False
+			return super()._read_gzip_header()
+
+		def peek(self, l=1):
+			r = self.read(l)
+			self._fp.prepend(r)
+			return r
+
+	def __init__(self, type):
+		self.type = type
+
+	def read(self, c, *, ctx=None):
+		r = self._GzipReader(c)
+		try: return self.type.read(r, ctx=ctx)
+		finally:
+			if (r._finished is not None): c.seek(r._finished)
+
+	def pack(self, v, *, ctx=None):
+		return gzip.compress(self.type.pack(v, ctx=ctx))
 
 @cachedclass
 class Struct:
@@ -333,10 +365,17 @@ class Struct:
 	def pack(self, v, *, ctx=None):
 		if (ctx is None): ctx = Sdict()
 		else: ctx = ctx.copy()
+		for k, t in self.fields.items():
+			if (isinstance(t, PackLast)): continue
+			c = ctx[k] = v.get(k, t._default)
+			ctx[k+'_packed'] = t.pack(c, ctx=ctx)
 		r = bytearray()
 		for k, t in self.fields.items():
-			ctx[k] = v.get(k, t._default)
-			r += t.pack(ctx[k], ctx=ctx)
+			try: c = ctx[k]
+			except KeyError: c = ctx[k] = v.get(k, t._default)
+			try: p = ctx[k+'_packed']
+			except KeyError: p = ctx[k+'_packed'] = t.pack(c, ctx=ctx)
+			r += p
 		return bytes(r)
 
 class Packet:
@@ -398,7 +437,7 @@ class EntityMetadata:
 		s = set(r)
 		for t in cls.entity_types:
 			if (set(t._names) >= s): break
-		else: return r
+		else: raise WTFException(s)
 		return t(**{t._names[k]: v for k, v in r.items()})
 
 	@classmethod
@@ -741,10 +780,11 @@ S.LoginStart = Packet(LOGIN, 0x00,
 	name = String,
 )
 
-S.EncryptionRequest = Packet(LOGIN, 0x01,
-	key_length = Short,
+S.EncryptionResponse = Packet(LOGIN, 0x01,
+	server_id = String,
+	key_length = Length[Short, 'key'],
 	key = Array[Byte, 'key_length'],
-	token_length = Short,
+	token_length = Length[Short, 'token'],
 	token = Array[Byte, 'token_length'],
 )
 
@@ -755,11 +795,10 @@ C.LoginDisconnect = Packet(LOGIN, 0x00,
 	reason = JSON,
 )
 
-C.EncryptionResponse = Packet(LOGIN, 0x01,
-	server_id = String,
-	key_length = Short,
+C.EncryptionRequest = Packet(LOGIN, 0x01,
+	key_length = Length[Short, 'key'],
 	key = Array[Byte, 'key_length'],
-	token_length = Short,
+	token_length = Length[Short, 'token'],
 	token = Array[Byte, 'token_length'],
 )
 
@@ -879,7 +918,7 @@ S.Animation = Packet(PLAY, 0x0A,
 
 S.EntityAction = Packet(PLAY, 0x0B,
 	eid = Int,
-	action_id = Enum[Byte] (
+	action = Enum[Byte] (
 		CROUCH		= 1,
 		UNCROUCH	= 2,
 		LEAVE_BED	= 3,
@@ -904,14 +943,14 @@ S.ClickWindow = Packet(PLAY, 0x0E,
 	window_id = Byte,
 	slot = Short,
 	button = Byte,
-	action_id = Short,
+	action = Short,
 	mode = Byte,
 	item = Slot,
 )
 
 S.ConfirmTransaction = Packet(PLAY, 0x0F,
 	window_id = Byte,
-	action_id = Short,
+	action = Short,
 	accepted = Bool,
 )
 
@@ -967,7 +1006,7 @@ S.ClientSettings = Packet(PLAY, 0x15,
 )
 
 S.ClientStatus = Packet(PLAY, 0x16,
-	action_id = Enum[Byte] (
+	action = Enum[Byte] (
 		RESPAWN			= 1,
 		STATS_REQUEST			= 2,
 		OPEN_INVENTORY_ACHIEVEMENT	= 3,
@@ -976,7 +1015,7 @@ S.ClientStatus = Packet(PLAY, 0x16,
 
 S.PluginMessage = Packet(PLAY, 0x17,
 	channel = String,
-	length = Short,
+	length = Length[Short, 'data'],
 	data = Array[Byte, 'length'],
 )
 
@@ -1100,9 +1139,9 @@ C.SpawnPlayer = Packet(PLAY, 0x0C,
 	eid = VarInt,
 	uuid = String,
 	name = String,
-	x = Fixed[Int, 5],
-	y = Fixed[Int, 5],
-	z = Fixed[Int, 5],
+	x = Fixed[Int],
+	y = Fixed[Int],
+	z = Fixed[Int],
 	yaw = Byte,
 	pitch = Byte,
 	item = Short,
@@ -1117,9 +1156,9 @@ C.CollectItem = Packet(PLAY, 0x0D,
 C.SpawnObject = Packet(PLAY, 0x0E, # TODO: https://wiki.vg/Entity_metadata#Objects
 	eid = VarInt,
 	type = Byte,
-	x = Fixed[Int, 5],
-	y = Fixed[Int, 5],
-	z = Fixed[Int, 5],
+	x = Fixed[Int],
+	y = Fixed[Int],
+	z = Fixed[Int],
 	pitch = Byte,
 	yaw = Byte,
 	data = Int, # https://wiki.vg/Object_Data
@@ -1128,9 +1167,9 @@ C.SpawnObject = Packet(PLAY, 0x0E, # TODO: https://wiki.vg/Entity_metadata#Objec
 C.SpawnMob = Packet(PLAY, 0x0F, # TODO: https://wiki.vg/Entity_metadata#Objects
 	eid = VarInt,
 	type = Byte,
-	x = Fixed[Int, 5],
-	y = Fixed[Int, 5],
-	z = Fixed[Int, 5],
+	x = Fixed[Int],
+	y = Fixed[Int],
+	z = Fixed[Int],
 	pitch = Byte,
 	head_pitch = Byte,
 	yaw = Byte,
@@ -1156,9 +1195,9 @@ C.SpawnPainting = Packet(PLAY, 0x10,
 
 C.SpawnExperienceOrb = Packet(PLAY, 0x11,
 	eid = VarInt,
-	x = Fixed[Int, 5],
-	y = Fixed[Int, 5],
-	z = Fixed[Int, 5],
+	x = Fixed[Int],
+	y = Fixed[Int],
+	z = Fixed[Int],
 	count = Short,
 )
 
@@ -1170,7 +1209,7 @@ C.EntityVelocity = Packet(PLAY, 0x12,
 )
 
 C.DestroyEntities = Packet(PLAY, 0x13,
-	count = Byte,
+	count = Length[Byte, 'eids'],
 	eids = Array[Int, 'count'],
 )
 
@@ -1180,9 +1219,9 @@ C.Entity = Packet(PLAY, 0x14,
 
 C.EntityRelativeMove = Packet(PLAY, 0x15,
 	eid = Int,
-	dx = Fixed[Byte, 5],
-	dy = Fixed[Byte, 5],
-	dz = Fixed[Byte, 5],
+	dx = Fixed[Byte],
+	dy = Fixed[Byte],
+	dz = Fixed[Byte],
 )
 
 C.EntityLook = Packet(PLAY, 0x16,
@@ -1193,18 +1232,18 @@ C.EntityLook = Packet(PLAY, 0x16,
 
 C.EntityLookAndRelativeMove = Packet(PLAY, 0x17,
 	eid = Int,
-	dx = Fixed[Byte, 5],
-	dy = Fixed[Byte, 5],
-	dz = Fixed[Byte, 5],
+	dx = Fixed[Byte],
+	dy = Fixed[Byte],
+	dz = Fixed[Byte],
 	yaw = Byte,
 	pitch = Byte,
 )
 
 C.EntityTeleport = Packet(PLAY, 0x18,
 	eid = Int,
-	x = Fixed[Int, 5],
-	y = Fixed[Int, 5],
-	z = Fixed[Int, 5],
+	x = Fixed[Int],
+	y = Fixed[Int],
+	z = Fixed[Int],
 	yaw = Byte,
 	pitch = Byte,
 )
@@ -1265,7 +1304,7 @@ C.SetExperience = Packet(PLAY, 0x1F,
 
 C.EntityProperties = Packet(PLAY, 0x20,
 	eid = Int,
-	count = Int,
+	count = Length[Int, 'properties'],
 	properties = Array[Struct (
 		key = Enum[String] (
 			MAX_HEALTH				= 'generic.maxHealth',
@@ -1277,7 +1316,7 @@ C.EntityProperties = Packet(PLAY, 0x20,
 			ZOMBIE_SPAWN_REINFORCEMENTS_CHANCE	= 'zombie.spawnReinforcements',
 		),
 		value = Double,
-		length = Short,
+		length = Length[Short, 'modifiers'],
 		modifiers = Array[Struct (
 			uuid = UUID,
 			amount = Double,
@@ -1287,7 +1326,7 @@ C.EntityProperties = Packet(PLAY, 0x20,
 				MUL_PROD	= 2,
 			),
 		), 'length'],
-	), 'count'], # Properties
+	), 'count'],
 )
 
 C.ChunkData = Packet(PLAY, 0x21,
@@ -1296,16 +1335,16 @@ C.ChunkData = Packet(PLAY, 0x21,
 	full_section = Bool,
 	pbm = UShort,
 	abm = UShort,
-	size = Int,
-	data = Array[Byte, 'size'],
+	size = Size[Int, 'data'],
+	data = Zlibbed[Byte, 'size'],
 )
 
 C.MultiBlockChange = Packet(PLAY, 0x22,
 	chunk_x = VarInt,
 	chunk_z = VarInt,
-	count = Short,
-	size = Int,
-	data = Array[Mask[UInt] (
+	count = Length[Short, 'records'],
+	size = Size[Int, 'records'],
+	records = Array[Mask[UInt] (
 		BLOCK_DATA	= 0x0000000F,
 		BLOCK_ID	= 0x0000FFF0,
 		BLOCK_Y	= 0x00FF0000,
@@ -1339,10 +1378,10 @@ C.BlockBreakAnimation = Packet(PLAY, 0x25,
 )
 
 C.MapChunkBulk = Packet(PLAY, 0x26,
-	count = Short,
-	size = Int,
+	count = Length[Short, 'meta'],
+	size = Size[Int, 'data'],
 	sky_light_sent = Bool,
-	data = Array[Byte, 'size'],
+	data = Zlibbed[Byte, 'size'],
 	meta = Array[Struct (
 		chunk_x = Int,
 		chunk_z = Int,
@@ -1356,7 +1395,7 @@ C.Explosion = Packet(PLAY, 0x27,
 	y = Float,
 	z = Float,
 	radius = Float,
-	count = Int,
+	count = Length[Int, 'records'],
 	records = Array[Struct (
 		x = Byte,
 		y = Byte,
@@ -1427,9 +1466,9 @@ C.SpawnGlobalEntity = Packet(PLAY, 0x2C,
 	type = Enum[Byte] (
 		THUNDERBOLT = 1,
 	),
-	x = Fixed[Int, 5],
-	y = Fixed[Int, 5],
-	z = Fixed[Int, 5],
+	x = Fixed[Int],
+	y = Fixed[Int],
+	z = Fixed[Int],
 )
 
 C.OpenWindow = Packet(PLAY, 0x2D,
@@ -1453,7 +1492,7 @@ C.SetSlot = Packet(PLAY, 0x2F,
 
 C.WindowItems = Packet(PLAY, 0x30,
 	window_id = UByte,
-	count = Short,
+	count = Length[Short, 'slots'],
 	slots = Array[Slot, 'count'],
 )
 
@@ -1468,7 +1507,7 @@ C.WindowProperty = Packet(PLAY, 0x31,
 
 C.ConfirmTransaction = Packet(PLAY, 0x32,
 	window_id = UByte,
-	action_id = Short,
+	action = Short,
 	accepted = Bool,
 )
 
@@ -1479,9 +1518,9 @@ C.UpdateSign = Packet(PLAY, 0x33,
 	lines = Array[String, 4],
 )
 
-C.Maps = Packet(PLAY, 0x34, # TODO parse array
+C.MapData = Packet(PLAY, 0x34, # TODO parse array
 	item_damage = VarInt,
-	length = Short,
+	length = Length[Short, 'data'],
 	data = Array[Byte, 'length'],
 )
 
@@ -1489,10 +1528,10 @@ C.UpdateBlockEntity = Packet(PLAY, 0x35,
 	x = Int,
 	y = Short,
 	z = Int,
-	action_id = Enum[UByte] (
+	action = Enum[UByte] (
 		MOB_IN_SPAWNER = 1,
 	),
-	length = Short,
+	length = Length[Short, 'nbt_data'],
 	nbt_data = Optional[NBT, 'length'],
 )
 
@@ -1503,7 +1542,7 @@ C.SignEditorOpen = Packet(PLAY, 0x36,
 )
 
 C.Statistics = Packet(PLAY, 0x37,
-	count = VarInt,
+	count = Length[VarInt, 'data'],
 	data = Array[Struct (
 		name = String,
 		amount = VarInt,
@@ -1528,14 +1567,14 @@ C.PlayerAbilities = Packet(PLAY, 0x39,
 )
 
 C.TabComplete = Packet(PLAY, 0x3A,
-	count = VarInt,
+	count = Length[VarInt, 'matches'],
 	matches = Array[String, 'count'],
 )
 
 C.ScoreboardObjective = Packet(PLAY, 0x3B,
 	name = String,
 	value = String,
-	action_id = Enum[Byte] (
+	action = Enum[Byte] (
 		CREATE = 0,
 		REMOVE = 1,
 		UPDATE = 2,
@@ -1544,7 +1583,7 @@ C.ScoreboardObjective = Packet(PLAY, 0x3B,
 
 C.UpdateScore = Packet(PLAY, 0x3C,
 	name = String,
-	action_id = Enum[Byte] (
+	action = Enum[Byte] (
 		UPDATE = 0,
 		REMOVE = 1,
 	),
@@ -1578,13 +1617,13 @@ C.Teams = Packet(PLAY, 0x3E,
 		ON			= 1,
 		FRIENDLY_INVISIBLE	= 3,
 	), 'mode', (0, 2)],
-	count = Optional[Short, 'mode', (0, 3, 4)],
+	count = Optional[Length[Short, 'players'], 'mode', (0, 3, 4)],
 	players = Optional[Array[String, 'count'], 'mode', (0, 3, 4)],
 )
 
 C.PluginMessage = Packet(PLAY, 0x3F,
 	channel = String,
-	length = Short,
+	length = Length[Short, 'data'],
 	data = Array[Byte, 'length'],
 )
 
