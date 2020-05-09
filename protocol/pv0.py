@@ -101,11 +101,10 @@ class _VarIntBase:
 	@classmethod
 	def read(cls, c, *, ctx=None):
 		r = int()
-		i = int()
 		for i in range(cls.length):
 			b = (c.read(1) or b'\0')[0]
-			r |= (b & (1 << 7)-1) << (7*i)
-			if (not b & (1 << 7)): break
+			r |= (b & 0x7f) << (7*i)
+			if (not b & 0x80): break
 		else: raise \
 			ValueError(f"{cls.__name__} is too big")
 		return r
@@ -114,9 +113,9 @@ class _VarIntBase:
 	def pack(cls, v, *, ctx=None):
 		r = bytearray()
 		while (True):
-			c = v & (1 << 7)-1
+			c = (v & 0x7f)
 			v >>= 7
-			if (v): c |= (1 << 7)
+			if (v): c |= 0x80
 			r.append(c)
 			if (not v): break
 		assert (len(r) <= cls.length)
@@ -279,7 +278,8 @@ class Length(PackLast):
 
 	def read(self, c, *, ctx=None):
 		r = self.type.read(c, ctx=ctx)
-		assert (r == len(ctx[self.field]))
+		try: assert (r == len(ctx[self.field]))
+		except KeyError: pass # TODO?
 		return r
 
 	def pack(self, v, *, ctx=None):

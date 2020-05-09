@@ -9,6 +9,7 @@ class Block(Updatable):
 	z: int
 	id: int
 	data: int
+	sky_light: int
 	chunk: None
 
 	def __init__(self, x, y, z, *, chunk=None):
@@ -21,9 +22,9 @@ class Block(Updatable):
 		return bool(self.id)
 
 	@dispatch
-	def set(self, id: int, data: int = 0, *, bulk=False):
-		old = (self.id, self.data)
-		self.id, self.data = id, data
+	def set(self, id: int, data: int = 0, sky_light: int = 0, *, bulk=False):
+		old = (self.id, self.data, self.sky_light)
+		self.id, self.data, self.sky_light = id, data, sky_light
 		if (not bulk and
 		    self.chunk is not None and
 		    self.chunk.chunksec is not None and
@@ -47,6 +48,7 @@ class _Air(Block):
 	z = -1
 	id = 0
 	data = 0
+	sky_light = 0
 	chunk = None
 	dimension: int
 
@@ -56,8 +58,11 @@ class _Air(Block):
 	def __repr__(self):
 		return f"<Air block>"
 
-	def set(self, id, data=None):
-		pass
+	def __setattr__(self, x, v):
+		raise WTFException(self)
+
+	def set(self, *_, **__):
+		raise WTFException(self)
 
 class Chunk(Updatable):
 	x: int
@@ -157,7 +162,7 @@ class ChunkSection(Updatable):
 			return chunk
 
 	@dispatch
-	def load(self, pbm, abm, data: bytes):
+	def load(self, pbm, abm, data: bytes, *, sky_light=False):
 		pbm %= (1 << 16)
 		i = int()
 		for cy in range(16):
@@ -174,16 +179,28 @@ class ChunkSection(Updatable):
 			for y in range(16):
 				for z in range(16):
 					for x in range(0, 16, 2):
-						if (data[i] & 0xf0): chunk[x, y, z].data = data[i] & 0xf0
+						if (data[i] & 0xf0): chunk[x, y, z].data = (data[i] >> 4) & 0x0f
 						if (data[i] & 0x0f): chunk[x+1, y, z].data = data[i] & 0x0f
 						i += 1
+		if (sky_light):
+			for cy in range(16):
+				if (not pbm & (1 << cy)): continue
+				chunk = self.getchunk(cy)
+				for y in range(16):
+					for z in range(16):
+						for x in range(0, 16, 2):
+							if (data[i] & 0xf0): chunk[x, y, z].sky_light = (data[i] >> 4) & 0x0f
+							if (data[i] & 0x0f): chunk[x+1, y, z].sky_light = data[i] & 0x0f
+							i += 1
+
+		#assert (self.chunkdata_bytes[pbm][1][:i] == data[:i])
 
 	@itemget
 	def chunkdata_bytes(self, pbm):
 		pbm %= (1 << 16)
 		abm, cd = int(), bytearray()
-		cd += bytes().join(self.chunks[cy].blockids_bytes if (pbm & (1 << cy) and cy in self.chunks) else b'\0'*(16*16*16) for cy in range(16))
-		cd += bytes().join(self.chunks[cy].blockdata_bytes if (pbm & (1 << cy) and cy in self.chunks) else b'\0'*(16*16*16//2) for cy in range(16))
+		cd += bytes().join(self.chunks[cy].blockids_bytes if (cy in self.chunks) else b'\0'*(16*16*16) for cy in range(16) if pbm & (1 << cy))
+		cd += bytes().join(self.chunks[cy].blockdata_bytes if (cy in self.chunks) else b'\0'*(16*16*16//2) for cy in range(16) if pbm & (1 << cy))
 		return (abm, bytes(cd))
 
 class Map(Updatable):
@@ -226,8 +243,8 @@ class Map(Updatable):
 			return chunksec
 
 	@dispatch
-	def load(self, cx, cz, pbm, abm, data: bytes):
-		self.getchunksec(cx, cz).load(pbm, abm, data)
+	def load(self, cx, cz, pbm, abm, data: bytes, *, sky_light=False):
+		self.getchunksec(cx, cz).load(pbm, abm, data, sky_light=sky_light)
 
 class World(Updatable):
 	maps: dict

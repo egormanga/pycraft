@@ -138,7 +138,7 @@ def main(cargs):
 
 				lastupd = time.time()
 		except NoServer as ex: exit(ex)
-		except Exception as ex: exception(ex)
+		#except Exception as ex: exception(ex)
 		except KeyboardInterrupt as ex: sys.stderr.write('\r'); client.disconnect(); exit(ex)
 
 if (__name__ == '__main__'): exit(main())

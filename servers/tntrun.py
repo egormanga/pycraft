@@ -27,6 +27,12 @@ class TNTRunServer(MCServer):
 				if (p.pos.on_ground): self.world[p.dimension][math.floor(p.pos.x-.3):math.ceil(p.pos.x+.3), p.pos.y-1, math.floor(p.pos.z-.3):math.ceil(p.pos.z+.3)] = 0
 				self.world[p.dimension][0, 0, 0] = 1
 
+	def create_player(self, **kwargs):
+		player = Player(**kwargs)
+		player.gamemode = self.config.default_gamemode
+		player.pos.pos = (0.5, 1, 0.5)
+		return player
+
 	def onchunksectioncreate(self, cs):
 		x, z = cs.x//16, cs.z//16
 		pbm = -1
@@ -77,12 +83,14 @@ def handleLoginStart(server, c, p):
 
 	try: profile = MojangAPI.profile(p.name)[0]
 	except Exception: profile = {'name': p.name, 'id': uuid3(NAMESPACE_OID, "OfflinePlayer:"+p.name)}
-	c.player = server.entities.add_player(Player(
+
+	player = server.playerdata.get_player(
 		name=profile['name'],
 		uuid=profile['id'],
-		gamemode=server.config.default_gamemode,
-	))
-	c.player.pos.pos = (0.5, 1, 0.5)
+	)
+	if (player in server.players): raise Disconnect("You are logged in from another location")
+
+	c.player = player
 	C.LoginSuccess.send(c,
 		uuid = c.player.uuid,
 		username = c.player.name,
@@ -101,7 +109,6 @@ def handleLoginStart(server, c, p):
 	for (x, z), cs in server.world[c.player.dimension].chunksec.items():
 		pbm = sum(1 << cy for cy in range(16) if cs.chunks.get(cy))
 		abm, cd = cs.chunkdata_bytes[pbm]
-		cd = zlib.compress(cd)
 		C.ChunkData.send(c,
 			chunk_x = x,
 			chunk_z = z,

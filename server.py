@@ -67,6 +67,7 @@ class MCServer:
 		self.clients = Slist()
 		self.handlers = Handlers(self.handlers)
 		self.handler = lambda x: self.handlers.handler(x)
+		self.subhandler = lambda x: self.handlers.subhandler(x)
 		self.commands = Commands(self.commands, self)
 		self.command = lambda x: self.commands.command(x)
 		self.events = Events(self.events, self)
@@ -160,6 +161,10 @@ class MCServer:
 	@classmethod
 	def handler(cls, *args, **kwargs):
 		return cls.handlers.handler(*args, **kwargs)
+
+	@classmethod
+	def subhandler(cls, *args, **kwargs):
+		return cls.handlers.subhandler(*args, **kwargs)
 
 	@classmethod
 	def command(cls, *args, **kwargs):

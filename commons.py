@@ -142,6 +142,16 @@ class Handlers(dict): # TODO: rewrite as a mixin
 			return self[packet]
 		return decorator
 
+	def subhandler(self, packet):
+		def decorator(f):
+			superhandler = self[packet]
+			def handler(*args, **kwargs):
+				superhandler(*args, **kwargs)
+				return f(*args, **kwargs)
+			self[packet] = handler
+			return self[packet]
+		return decorator
+
 class Commands(metaclass=SlotsMeta):
 	commands: dict
 	trie: PyT9.Trie
